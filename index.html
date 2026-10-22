@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Operation Zero</title>
+  <meta name="description" content="OPERATION ZERO — FPS tático de treinamento no navegador (Three.js)." />
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <canvas id="game-canvas" aria-label="Área de jogo"></canvas>
+
+    <!-- camadas de feedback de tela -->
+    <div id="smoke-overlay"></div>
+    <div id="damage-vignette"></div>
+    <div id="damage-indicators"></div>
+
+    <!-- HUD -->
+    <div id="hud" class="hidden">
+      <header class="hud-top">
+        <div class="hud-arena">
+          <span class="label">ARENA</span>
+          <strong id="hud-arena-name">FOUNDRY-7</strong>
+          <span id="hud-zone" class="zone">STAGING</span>
+        </div>
+        <div class="hud-score">
+          <div class="score-block">
+            <span class="label">ELIMINAÇÕES</span>
+            <span class="score-value"><span id="hud-kills">00</span><small>/<span id="hud-target">30</span></small></span>
+          </div>
+          <div class="score-divider"></div>
+          <div class="score-block">
+            <span class="label">TEMPO</span>
+            <span class="score-value" id="hud-timer">00:00</span>
+          </div>
+        </div>
+        <div class="hud-objective">
+          <span class="label">OBJETIVO</span>
+          <span id="hud-objective">Elimine 30 alvos hostis</span>
+        </div>
+      </header>
+
+      <div id="crosshair" aria-hidden="true">
+        <i class="xh top"></i><i class="xh bottom"></i><i class="xh left"></i><i class="xh right"></i><i class="xh-dot"></i>
+      </div>
+      <div id="hitmarker" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div id="center-message"></div>
+      <div id="killfeed"></div>
+      <div id="reload-indicator"><span>RECARREGANDO</span></div>
+
+      <div class="hud-bottom-left">
+        <div id="health-block" class="health-block">
+          <div class="health-icon" aria-hidden="true"></div>
+          <span id="hud-health" class="health-value">100</span>
+          <div class="health-meta">
+            <div class="health-bar"><div id="hud-health-fill"></div></div>
+            <div class="state-row"><span class="label">ESTADO</span><span id="hud-state">PARADO</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hud-bottom-right">
+        <div id="ability-card" class="ability-card ready" title="Névoa Ciano">
+          <div id="ability-cd" class="ability-cd"></div>
+          <svg class="ability-icon" viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M14 32c-4 0-7-3-7-7s3-7 7-7c1-5 5-8 10-8s9 3 10 8c4 0 7 3 7 7s-3 7-7 7z" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>
+            <path d="M15 38h18M19 43h10" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          </svg>
+          <span class="ability-key">E</span>
+          <span id="ability-timer" class="ability-timer"></span>
+        </div>
+        <div class="weapon-panel">
+          <div id="ammo-block" class="ammo-block">
+            <span id="hud-mag" class="ammo-mag">25</span>
+            <span class="ammo-reserve"><span class="ammo-sep">/</span><span id="hud-reserve">100</span></span>
+          </div>
+          <div class="weapon-row">
+            <span id="hud-weapon">VX-9 RANGER</span>
+            <span id="weapon-slots" class="slots"><span data-slot="1">1</span><span data-slot="2">2</span></span>
+          </div>
+          <div class="reload-bar"><div id="hud-reload-fill"></div></div>
+        </div>
+      </div>
+      <!-- HUD multiplayer -->
+      <div id="hud-net" class="hidden">
+        <div class="net-score">
+          <span class="team-score alfa"><small>ALFA</small><b id="net-score-1">0</b></span>
+          <div class="net-clock"><span id="net-phase">EM COMBATE</span><strong id="net-timer">0:00</strong><span id="net-round"></span></div>
+          <span class="team-score omega"><b id="net-score-2">0</b><small>ÔMEGA</small></span>
+        </div>
+      </div>
+      <div id="net-status" class="hidden"><i class="dot"></i><span id="net-ping">-- ms</span><span id="net-team-tag" class="team-tag">ALFA</span></div>
+      <div id="objective-bar" class="hidden"><span id="objective-label">INSTALANDO</span><div class="bar"><div id="objective-fill"></div></div></div>
+      <div id="death-overlay" class="hidden"><strong>ELIMINADO</strong><span id="death-detail"></span></div>
+      <div id="round-banner" class="hidden"><strong id="round-banner-title"></strong><span id="round-banner-text"></span></div>
+      <div id="scoreboard" class="hidden">
+        <div class="sb-team alfa"><h3>ALFA <b id="sb-score-1">0</b></h3><table><thead><tr><th>JOGADOR</th><th>E</th><th>M</th><th>PTS</th><th>MS</th></tr></thead><tbody id="sb-team-1"></tbody></table></div>
+        <div class="sb-team omega"><h3>ÔMEGA <b id="sb-score-2">0</b></h3><table><thead><tr><th>JOGADOR</th><th>E</th><th>M</th><th>PTS</th><th>MS</th></tr></thead><tbody id="sb-team-2"></tbody></table></div>
+      </div>
+      <div id="fps-counter" class="hidden">-- FPS</div>
+    </div>
+
+    <!-- tela de carregamento -->
+    <section class="screen visible" data-screen="loading">
+      <div class="loading-box">
+        <div class="brand small"><span class="brand-op">OPERATION</span><span class="brand-zero">ZERO</span></div>
+        <div class="loading-track"><div id="loading-bar"></div></div>
+        <p id="loading-text">Carregando módulos…</p>
+      </div>
+    </section>
+
+    <!-- menu principal -->
+    <section class="screen" data-screen="menu">
+      <div class="menu-shade"></div>
+      <div class="menu-layout">
+        <div class="menu-main">
+          <p class="eyebrow">OPERATION ZERO 2.0 · FPS TÁTICO MULTIPLAYER</p>
+          <h1 class="brand"><span class="brand-op">OPERATION</span><span class="brand-zero">ZERO</span></h1>
+          <p class="tagline">Instalação industrial abandonada. Alvos hostis ativos. Precisão, recuo e posicionamento decidem a sessão.</p>
+          <div class="menu-actions">
+            <button class="btn primary" data-action="online">JOGAR ONLINE</button>
+            <button class="btn" data-action="play">TREINO OFFLINE</button>
+            <button class="btn" data-action="settings">CONFIGURAÇÕES</button>
+            <button class="btn ghost menu-controls-btn" data-action="controls">CONTROLES</button>
+          </div>
+          <p class="menu-note" id="menu-note">Online: combate por equipes ou modo tático de ataque e defesa. Offline: elimine 30 alvos na Foundry-7.</p>
+        </div>
+        <aside class="controls-card" aria-label="Controles">
+          <h2>CONTROLES</h2>
+          <dl>
+            <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Mover</dd>
+            <dt><kbd>Mouse</kbd></dt><dd>Olhar</dd>
+            <dt><kbd>LMB</kbd></dt><dd>Disparar</dd>
+            <dt><kbd>RMB</kbd></dt><dd>Mirar</dd>
+            <dt><kbd>Shift</kbd></dt><dd>Caminhar (silencioso)</dd>
+            <dt><kbd>C</kbd> / <kbd>Ctrl</kbd></dt><dd>Agachar</dd>
+            <dt><kbd>Espaço</kbd></dt><dd>Pular</dd>
+            <dt><kbd>R</kbd></dt><dd>Recarregar</dd>
+            <dt><kbd>E</kbd></dt><dd>Névoa Ciano</dd>
+            <dt><kbd>F</kbd></dt><dd>Instalar / desarmar (tático)</dd>
+            <dt><kbd>Tab</kbd></dt><dd>Placar (online)</dd>
+            <dt><kbd>1</kbd> <kbd>2</kbd></dt><dd>Fuzil / Pistola</dd>
+            <dt><kbd>Esc</kbd></dt><dd>Pausar</dd>
+          </dl>
+        </aside>
+      </div>
+      <footer class="menu-footer"><span>v2.0 · Three.js r160 · Colyseus 0.18</span><span>Sem conta: escolha um nome e jogue</span></footer>
+    </section>
+
+    <!-- pausa -->
+    <section class="screen" data-screen="pause">
+      <div class="panel">
+        <p class="eyebrow">SESSÃO SUSPENSA</p>
+        <h2 class="panel-title">PAUSADO</h2>
+        <div class="panel-actions">
+          <button class="btn primary" data-action="resume">RETOMAR</button>
+          <button class="btn offline-only" data-action="restart">REINICIAR SESSÃO</button>
+          <button class="btn" data-action="settings">CONFIGURAÇÕES</button>
+          <button class="btn ghost offline-only" data-action="quit">SAIR PARA O MENU</button>
+          <button class="btn ghost online-only" data-action="net-leave">SAIR DA PARTIDA</button>
+        </div>
+        <p class="panel-hint" id="pause-hint">O combate, os bots e os temporizadores estão congelados.</p>
+      </div>
+    </section>
+
+    <!-- configurações -->
+    <section class="screen" data-screen="settings">
+      <form class="panel settings" id="settings-form" autocomplete="off">
+        <p class="eyebrow">AJUSTES</p>
+        <h2 class="panel-title">CONFIGURAÇÕES</h2>
+        <label class="field"><span>Sensibilidade do mouse</span>
+          <input type="range" name="sensitivity" min="0.1" max="4" step="0.05" /><output data-out="sensitivity"></output></label>
+        <label class="field"><span>Campo de visão (FOV vertical)</span>
+          <input type="range" name="fov" min="70" max="100" step="1" /><output data-out="fov"></output></label>
+        <label class="field"><span>Volume</span>
+          <input type="range" name="volume" min="0" max="100" step="1" /><output data-out="volume"></output></label>
+        <label class="field"><span>Qualidade gráfica</span>
+          <select name="quality">
+            <option value="low">Baixa — sem sombras, resolução 1×</option>
+            <option value="medium">Média — sombras 2048</option>
+            <option value="high">Alta — sombras 4096, alta densidade</option>
+          </select></label>
+        <label class="field"><span>Cor da mira</span>
+          <select name="crosshairColor">
+            <option value="#3ef0ff">Ciano</option>
+            <option value="#7dff6a">Verde</option>
+            <option value="#ffe14a">Amarelo</option>
+            <option value="#ffffff">Branco</option>
+            <option value="#ff5cf0">Magenta</option>
+          </select></label>
+        <label class="field check"><input type="checkbox" name="botsFireBack" /><span>Bots revidam (dano ao jogador)</span></label>
+        <label class="field check"><input type="checkbox" name="showFps" /><span>Mostrar FPS medido</span></label>
+        <div class="panel-actions row">
+          <button class="btn primary" type="button" data-action="settings-back">VOLTAR</button>
+          <button class="btn ghost" type="button" data-action="settings-reset">RESTAURAR PADRÃO</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- fim de sessão -->
+    <section class="screen" data-screen="end">
+      <div class="panel end">
+        <span id="end-badge" class="end-badge win">CONCLUÍDO</span>
+        <h2 class="panel-title" id="end-title">TREINAMENTO CONCLUÍDO</h2>
+        <p class="panel-hint" id="end-subtitle"></p>
+        <div id="end-stats" class="end-stats"></div>
+        <div class="panel-actions row">
+          <button class="btn primary" data-action="restart">JOGAR NOVAMENTE</button>
+          <button class="btn ghost" data-action="quit">MENU PRINCIPAL</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- erro de inicialização -->
+    <section class="screen" data-screen="error">
+      <div class="panel error">
+        <p class="eyebrow">FALHA DE INICIALIZAÇÃO</p>
+        <h2 class="panel-title">NÃO FOI POSSÍVEL INICIAR</h2>
+        <p id="error-text" class="panel-hint"></p>
+        <ul class="error-tips">
+          <li>Execute por um servidor HTTP local (ex.: <code>python -m http.server 8000</code>), não abrindo o arquivo diretamente.</li>
+          <li>O Three.js é carregado do CDN jsDelivr: é necessária conexão com a internet no primeiro acesso.</li>
+          <li>Use um navegador atualizado com WebGL habilitado (Chrome, Edge ou Firefox).</li>
+        </ul>
+        <div class="panel-actions row"><button class="btn primary" onclick="location.reload()">TENTAR NOVAMENTE</button></div>
+      </div>
+    </section>
+
+    <!-- multiplayer: menu online -->
+    <section class="screen" data-screen="online">
+      <div class="menu-shade"></div>
+      <div class="online-layout">
+        <div class="panel online-main">
+          <p class="eyebrow">OPERATION ZERO 2.0 · MULTIPLAYER</p>
+          <h2 class="panel-title">JOGAR ONLINE</h2>
+          <label class="field"><span>Nome de exibição</span><input id="net-name" type="text" maxlength="16" autocomplete="off" spellcheck="false" placeholder="2 a 16 caracteres" /></label>
+          <div class="field"><span>Modo de jogo</span>
+            <div class="segmented" id="net-mode">
+              <button type="button" data-mode="tdm" class="active">COMBATE POR EQUIPES</button>
+              <button type="button" data-mode="tactical">TÁTICO · ATAQUE E DEFESA</button>
+            </div>
+          </div>
+          <div class="panel-actions">
+            <button class="btn primary" data-action="net-quick">BUSCAR PARTIDA PÚBLICA</button>
+            <button class="btn" data-action="net-create">CRIAR SALA PRIVADA</button>
+            <div class="code-row"><input id="net-code" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="CÓDIGO" /><button class="btn" data-action="net-join-code">ENTRAR COM CÓDIGO</button></div>
+            <button class="btn ghost" data-action="net-back">VOLTAR</button>
+          </div>
+          <p class="net-message" id="net-message" role="status"></p>
+          <p class="net-server" id="net-server">Servidor: aguardando…</p>
+        </div>
+        <aside class="panel room-list" aria-label="Partidas públicas">
+          <header><span>PARTIDAS PÚBLICAS</span><button class="link" type="button" data-action="net-refresh">ATUALIZAR</button></header>
+          <ul id="net-rooms"><li class="empty">Nenhuma partida pública no momento.</li></ul>
+        </aside>
+      </div>
+    </section>
+
+    <!-- multiplayer: busca -->
+    <section class="screen" data-screen="searching">
+      <div class="panel searching">
+        <div class="spinner" aria-hidden="true"></div>
+        <h2 class="panel-title" id="search-title">PROCURANDO PARTIDA</h2>
+        <p class="panel-hint" id="search-text">Conectando ao servidor…</p>
+        <div class="panel-actions row"><button class="btn ghost" data-action="net-cancel">CANCELAR</button></div>
+      </div>
+    </section>
+
+    <!-- multiplayer: lobby da sala -->
+    <section class="screen" data-screen="lobby">
+      <div class="menu-shade"></div>
+      <div class="panel lobby">
+        <p class="eyebrow" id="lobby-mode">COMBATE POR EQUIPES</p>
+        <h2 class="panel-title" id="lobby-name">SALA</h2>
+        <div class="lobby-meta">
+          <div class="code-box"><span class="label">CÓDIGO DA SALA</span><strong id="lobby-code">-----</strong><button class="link" type="button" data-action="net-copy-code">COPIAR</button></div>
+          <div><span class="label">JOGADORES</span><strong id="lobby-count">0/0</strong></div>
+          <div><span class="label">LATÊNCIA</span><strong id="lobby-ping">— ms</strong></div>
+        </div>
+        <div class="teams">
+          <div class="team alfa"><h3>ALFA</h3><ul id="lobby-team-1"></ul></div>
+          <div class="team omega"><h3>ÔMEGA</h3><ul id="lobby-team-2"></ul></div>
+        </div>
+        <p class="panel-hint" id="lobby-status">Aguardando jogadores…</p>
+        <div class="panel-actions row">
+          <button class="btn primary" data-action="net-start" id="lobby-start">INICIAR PARTIDA</button>
+          <button class="btn" data-action="net-ready" id="lobby-ready">PRONTO</button>
+          <button class="btn" data-action="net-switch-team">TROCAR EQUIPE</button>
+          <button class="btn ghost" data-action="net-leave">SAIR DA SALA</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- multiplayer: resultado -->
+    <section class="screen" data-screen="net-end">
+      <div class="panel end net-end">
+        <span id="net-end-badge" class="end-badge win">VITÓRIA</span>
+        <h2 class="panel-title" id="net-end-title">VITÓRIA DA EQUIPE ALFA</h2>
+        <p class="panel-hint" id="net-end-subtitle"></p>
+        <div class="net-end-score"><span class="alfa">ALFA <b id="net-end-1">0</b></span><span class="omega"><b id="net-end-2">0</b> ÔMEGA</span></div>
+        <table class="net-end-table"><thead><tr><th>JOGADOR</th><th>EQUIPE</th><th>E</th><th>M</th><th>PTS</th></tr></thead><tbody id="net-end-rows"></tbody></table>
+        <p class="panel-hint" id="net-end-return">Voltando ao lobby…</p>
+        <div class="panel-actions row"><button class="btn ghost" data-action="net-leave">SAIR DA SALA</button></div>
+      </div>
+    </section>
+
+    <!-- controles (telas estreitas) -->
+    <section class="screen" data-screen="controls">
+      <div class="panel">
+        <p class="eyebrow">REFERÊNCIA</p>
+        <h2 class="panel-title">CONTROLES</h2>
+        <div id="controls-copy"></div>
+        <div class="panel-actions row"><button class="btn primary" data-action="controls-back">VOLTAR</button></div>
+      </div>
+    </section>
+
+    <!-- estado da conexão durante a partida -->
+    <div id="net-overlay" class="hidden" role="alert">
+      <div class="panel net-overlay-panel">
+        <div class="spinner" aria-hidden="true"></div>
+        <h2 class="panel-title" id="net-overlay-title">RECONECTANDO</h2>
+        <p class="panel-hint" id="net-overlay-text"></p>
+        <div class="panel-actions row"><button class="btn ghost" data-action="net-abandon">VOLTAR AO MENU</button></div>
+      </div>
+    </div>
+
+    <div id="lock-prompt"><span id="lock-text">CLIQUE PARA RETOMAR</span></div>
+  </div>
+
+  <!-- Vigia de inicialização: mostra uma mensagem clara se os módulos não carregarem. -->
+  <script>
+    (function () {
+      function fail(msg) {
+        if (window.__OZ_BOOTED) return;
+        var screens = document.querySelectorAll('.screen');
+        for (var i = 0; i < screens.length; i++) screens[i].classList.toggle('visible', screens[i].dataset.screen === 'error');
+        document.getElementById('error-text').textContent = msg;
+      }
+      window.__OZ_FAIL = fail;
+      if (location.protocol === 'file:') {
+        fail('O jogo foi aberto como arquivo local (file://). Navegadores bloqueiam módulos ES nesse modo.');
+        return;
+      }
+      window.addEventListener('error', function (e) {
+        if (!window.__OZ_BOOTED && e && e.message) fail('Erro ao carregar: ' + e.message);
+      });
+      setTimeout(function () {
+        if (!window.__OZ_BOOTED) fail('Os módulos do jogo não terminaram de carregar em 15 segundos. Verifique a conexão com o CDN do Three.js.');
+      }, 15000);
+    })();
+  </script>
+  <script type="module" src="game.js" onerror="window.__OZ_FAIL && window.__OZ_FAIL('Falha ao baixar os módulos do jogo (game.js ou Three.js).')"></script>
+</body>
+</html>
