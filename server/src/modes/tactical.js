@@ -145,7 +145,7 @@ function tickObjective(room, dt) {
     const still = rec.move.onGround && Math.hypot(rec.move.vel.x, rec.move.vel.z) < STILL_SPEED;
     const wants = rec.interacting && s.alive && s.connected && still;
     if (s.team === st.attackers) {
-      const site = siteAt(pos.x, pos.z);
+      const site = siteAt(pos.x, pos.z, st.map);
       if ((sp.state === SPIKE.NONE || (sp.state === SPIKE.PLANTING && sp.actor === rec.sid)) && wants && site) {
         sp.state = SPIKE.PLANTING; sp.actor = rec.sid; sp.site = site;
         s.action = 1;
@@ -156,6 +156,7 @@ function tickObjective(room, dt) {
           sp.timer = CFG.detonateTime;
           s.action = 0;
           s.score += 300;
+          if (rec.matchStats) rec.matchStats.plants += 1;
           room.broadcast(MSG.NOTICE, { t: NOTICE_TYPES.INFO, n: s.name, m: `DISPOSITIVO INSTALADO NO OBJETIVO ${site}` });
         }
       } else if (sp.actor === rec.sid && sp.state === SPIKE.PLANTING) cancelAction(room, rec);
@@ -168,6 +169,7 @@ function tickObjective(room, dt) {
         if (sp.progress >= 1) {
           sp.state = SPIKE.DEFUSED; sp.actor = ''; s.action = 0;
           s.score += 300;
+          if (rec.matchStats) rec.matchStats.defuses += 1;
           roundWin(room, s.team, END_REASON.DEFUSED);
           return;
         }

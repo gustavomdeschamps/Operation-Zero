@@ -6,6 +6,7 @@ import {
   createTestRoom, addPlayer, placeAlive, startLive, frame, aim, chestOf, headOf, tick, push, messagesTo, DT, TEAM, PHASE,
 } from './helpers.js';
 import { BTN, MSG, SPIKE } from '../../shared/protocol.js';
+import { resetLoadout } from '../src/systems/combat.js';
 import { GAME } from '../../shared/game-config.js';
 import { AMMO_STATIONS } from '../../shared/arena-layout.js';
 import { Rewind } from '@colyseus/core';
@@ -169,6 +170,46 @@ test('estação de munição reabastece por proximidade, com recarga de 12 s', (
   a.ammo.get(rifle.slot).reserve = 5;
   tick(room, 60 * 13);
   assert.equal(a.ammo.get(rifle.slot).reserve, 5, 'longe da estação não reabastece');
+});
+
+test('kit: submetralhadora tem munição, cadência e dano próprios (5 tiros no corpo)', () => {
+  const { room, a, b } = duel();
+  a.primary = 'smg';
+  resetLoadout(a);
+  assert.equal(a.state.primary, 'smg');
+  assert.equal(a.state.mag, 32, 'carregador da SMG');
+  burst(room, a, b, 4, 5);                       // 13,3 disparos/s ≈ 4,5 ticks entre tiros
+  assert.equal(b.state.hp, 100 - 4 * 24);
+  assert.ok(b.state.alive);
+  burst(room, a, b, 1, 5);
+  assert.equal(b.state.alive, false, 'quinto tiro elimina');
+  assert.equal(a.state.mag, 32 - 5);
+});
+
+test('kit: troca de operador/arma validada no servidor (lobby) e recusa de identificadores falsos', () => {
+  const room = createTestRoom('tdm');
+  const a = addPlayer(room, { name: 'Ana', team: TEAM.ALFA });
+  room.rejectAction = (rec, action, reason) => { room.rejected = { action, reason }; };
+  room.requestLoadout(a, { operator: 'lince', primary: 'smg' });
+  assert.equal(a.state.operator, 'lince');
+  assert.equal(a.state.primary, 'smg');
+  assert.equal(a.state.mag, 32);
+  room.requestLoadout(a, { operator: 'robo-9', primary: 'smg' });
+  assert.equal(room.rejected.reason, 'Operador desconhecido.');
+  assert.equal(a.state.operator, 'lince', 'operador inexistente não é aplicado');
+  room.requestLoadout(a, { operator: 'corvo', primary: 'railgun' });
+  assert.match(room.rejected.reason, /Arma primária/);
+  assert.equal(a.state.primary, 'smg');
+  // em combate e vivo: a arma nova só entra no próximo surgimento
+  startLive(room);
+  placeAlive(room, a, 0, 22);
+  room.requestLoadout(a, { operator: 'corvo', primary: 'rifle' });
+  assert.equal(a.state.primary, 'smg', 'sem troca de arma no meio da vida');
+  assert.equal(a.state.operator, 'lince');
+  room.respawn(a);
+  assert.equal(a.state.primary, 'rifle');
+  assert.equal(a.state.operator, 'corvo');
+  assert.equal(a.state.mag, 25);
 });
 
 test('direção fora do cone de precisão é rejeitada', () => {

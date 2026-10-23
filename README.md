@@ -1,110 +1,312 @@
-# OPERATION ZERO 2.0
+# OPERATION ZERO
 
-FPS tático em primeira pessoa para o navegador (**HTML5 + CSS3 + módulos ES + Three.js r160**) com **multiplayer online** (**Node.js + Colyseus + WebSockets**) e **treino offline** contra bots.
+FPS tático em primeira pessoa para o navegador (**HTML5 + CSS3 + módulos ES + Three.js r160**), com **multiplayer online** (**Node.js + Colyseus 0.18 + WebSockets**), **bots controlados pelo servidor** e **treinamento offline**.
 
-A arena **FOUNDRY-7** é uma instalação industrial abandonada. Ela tem área de preparação, corredor central, duas rotas laterais (armazém e pátio), pátio de tiro com núcleo central, pórticos, plataforma elevada e dois objetivos (**A** no armazém, **B** no pátio) usados no modo tático.
+## Next-Gen (4.0)
+
+Evolução da 3.0 no mesmo projeto, sem substituir nada:
+
+- **Combate mais preciso:**
+  - hitboxes que seguem a postura animada (agachado, correndo, mirando);
+  - compensação de latência corrigida;
+  - 10 testes de precisão reproduzíveis.
+- **Bots no servidor:**
+  - completam as salas públicas e são sempre marcados como BOT;
+  - navegação pela colisão real do mapa;
+  - visão sem atravessar paredes nem fumaça, audição, cobertura e objetivos do tático;
+  - dificuldades Normal, Difícil e Elite;
+  - mesmas regras dos jogadores.
+- **LR-12 SENTINELA:** fuzil de precisão por ferrolho com luneta 4x, validado pelo servidor.
+- **ZERO CREDITS:**
+  - recompensas calculadas no servidor (conclusão, vitória, desempenho, objetivos), pagas uma
+    única vez;
+  - **LOJA** com caixas (chances exibidas, sorteio no servidor, abertura animada), inventário,
+    fragmentos de repetidos e seis **acabamentos originais**, apenas visuais.
+- **Operadores com equipamento original** (silhuetas por função) e aterrissagem animada.
+- **Interface:**
+  - abertura obrigatória e curta (sem "pular");
+  - menu sem informações técnicas, com LOJA, saldo e estado online, e tela de CRÉDITOS;
+  - HUD com latência opcional;
+  - pós-partida com recompensa detalhada e JOGAR NOVAMENTE.
+
+**Documentação:**
+
+| Arquivo | Conteúdo |
+|---|---|
+| `NEXT_GEN_AUDIT.md` | auditoria e correções |
+| `ECONOMY.md` | economia, loja e persistência |
+| `ART_DIRECTION.md` | direção de arte |
+| `ASSET_CREDITS.md` | origem e licença de cada recurso |
+
+### Bots
+
+- **Onde rodam:** só no servidor (`server/src/ai/`). Um bot é um participante sem cliente: produz o
+  mesmo quadro de entrada de um jogador, que passa pela física, munição, cadência e cone de
+  dispersão do servidor.
+- **Navegação:** grade de 0,5 m gerada da colisão real de cada mapa (`shared/ai/navgrid.js`), com
+  A\*.
+- **Busca pública:**
+  - depois de ~8 s com você no lobby, a sala é completada até 6 participantes;
+  - quando pessoas entram, bots saem;
+  - sem pessoas, a sala termina.
+- **Sala privada:** o anfitrião adiciona e remove bots (por equipe) e escolhe a dificuldade no lobby.
+
+### ZERO CREDITS, loja e acabamentos
+
+- **Ganhos por partida terminada:**
+
+| Parcela | Valor |
+|---|---|
+| Conclusão | 100 |
+| Vitória | +75 |
+| Desempenho | até 50 |
+| Objetivos | até 50 |
+
+- **Regras:** teto de 1 500 ZC por dia; quem abandona ou fica ocioso não recebe.
+- **Caixas** só com ZC ou fragmentos; não há dinheiro real.
+- **Saldo e inventário** ficam no servidor (`DATA_DIR`).
+  - **Atenção:** em disco efêmero (Render gratuito) eles se perdem a cada deploy.
+  - Ver `ECONOMY.md`.
+
+### Ferramenta de teste
+
+Em `localhost`, `?nointro` dispensa a abertura (só para testes automatizados; em produção a abertura
+é sempre exibida). `?debug` expõe o estado do jogo no console.
+
+---
+
+## Recursos da 3.0 (mantidos)
+
+A 3.0 acrescentou:
+
+- **operadores humanos 3D** com animação esquelética;
+- **marca própria** e **abertura cinematográfica**;
+- **menu principal completo** (operadores, arsenal, mapas e configurações);
+- **segundo mapa** (Porto Vesper) e **nova arma** (SV-4 Vespa);
+- **minimapa** com mapa tático e **editor de mira**.
 
 | Modo | Onde roda | Descrição |
 |---|---|---|
-| **Treino offline** | só o navegador | O jogo da v1, intacto: 14 bots, meta de 30 eliminações, Névoa Ciano. |
-| **Combate por equipes (TDM)** | servidor | ALFA × ÔMEGA. Vence quem chegar a 30 eliminações ou estiver à frente após 8 min. Retorno após 3 s com 1,5 s de proteção. |
-| **Tático: ataque e defesa** | servidor | Rodadas de 100 s com 8 s de preparação. Os atacantes instalam o dispositivo em A ou B (F segurado, 3,5 s). Os defensores desarmam (F segurado, 5 s) ou eliminam todos os atacantes. Detonação em 35 s. Vence quem fizer 5 rodadas. Sem retorno dentro da rodada. |
+| **Treinamento** | só o navegador | 14 soldados hostis na Foundry-7, meta de 30 eliminações. Eles avisam antes de atirar, revidam e reaparecem. |
+| **Mata-mata por equipes** | servidor | ALFA × ÔMEGA. Vence quem chegar a 30 eliminações ou estiver à frente após 8 min. Retorno após 3 s com 1,5 s de proteção. |
+| **Tático casual** | servidor | Rodadas de 100 s com 8 s de preparação. Atacantes instalam o dispositivo em A ou B (F segurado, 3,5 s); defensores desarmam (F segurado, 5 s) ou eliminam a equipe. Vence quem fizer 5 rodadas. |
+| **Partida personalizada** | servidor | Sala privada com código, modo e mapa escolhidos pelo anfitrião. |
+| **Competitivo** | — | **Indisponível** e identificado como "EM BREVE": exige contas e classificação, que não existem. |
 
-> **Estado da publicação:** o projeto está **preparado** para ser hospedado (variáveis de ambiente, CORS/origens, WSS, `/health`, encerramento ordenado, Dockerfile, [DEPLOY.md](DEPLOY.md)), mas **não foi publicado** na internet. Todos os testes multiplayer foram feitos em `localhost` (ver [Testes](#testes-executados)).
+> **Publicação:** nada foi publicado automaticamente. A versão online que já existe (Render) só muda quando você enviar estes arquivos ao repositório ligado a ela. Veja [Como atualizar sem quebrar a versão online](#como-atualizar-sem-quebrar-a-versão-online).
 
 ---
 
 ## Início rápido
 
-Requisitos: **Node.js 20 ou superior** (para o online). Para o modo offline, basta qualquer servidor HTTP estático.
+Requisito: **Node.js 20 ou superior**.
 
-### Online + offline (recomendado)
-
-Na pasta `operation-zero/` (a que contém `index.html` e `package.json`):
+Na pasta do projeto (a que contém `index.html` e `package.json`):
 
 ```bash
-npm install      # instala também as dependências de server/ (postinstall)
+npm install      # instala também as dependências de server/
 npm start        # servidor de partidas + arquivos do jogo em http://localhost:2567
 ```
 
-Abra **http://localhost:2567** no Chrome, Edge ou Firefox. O mesmo endereço oferece **JOGAR ONLINE** e **TREINO OFFLINE**.
+Abra **http://localhost:2567** no Chrome, Edge ou Firefox.
 
-No Windows, use os mesmos comandos no **PowerShell** ou no **Prompt de Comando**. Se a porta 2567 estiver ocupada:
+No Windows, os comandos são os mesmos no **PowerShell** ou no **Prompt de Comando**. Se a porta 2567 estiver ocupada:
 
 ```powershell
 $env:PORT=8080; npm start          # PowerShell
 ```
-```bat
-set PORT=8080 && npm start         & rem Prompt de Comando
-```
 
-Para não digitar a porta toda vez, copie `.env.example` para `.env` e edite os valores.
+**Somente offline (sem Node):** `python -m http.server 8080` na pasta do projeto e abra `http://localhost:8080`. O treinamento funciona; as partidas online mostram "servidor indisponível".
 
-### Somente offline (como na v1)
-
-```bat
-python -m http.server 8080
-```
-
-Abra **http://localhost:8080** e escolha **TREINO OFFLINE**. Nesse caso o **JOGAR ONLINE** mostra "servidor indisponível", porque o servidor Node não está rodando.
-
-> O Three.js vem do CDN jsDelivr (`three@0.160.0`), então o primeiro carregamento precisa de internet. O SDK de rede (Colyseus) é servido pelo próprio servidor em `/vendor/colyseus.js` e só é baixado ao entrar no modo online.
+> Todas as bibliotecas do navegador estão no projeto (`vendor/three/`), então o jogo não depende de CDN. O SDK de rede (Colyseus) é servido pelo próprio servidor em `/vendor/colyseus.js`.
 
 ### Testes automatizados
 
 ```bash
-npm test         # 39 testes do servidor (node:test), incluindo integração com clientes reais
+npm test         # 83 testes do servidor (node:test): precisão, bots, economia, armas, combate, integração
 ```
+
+---
+
+## Como atualizar sem quebrar a versão online
+
+1. **Não apague a pasta atual.** Extraia o pacote numa pasta nova, por exemplo `Documentos\operation-zero-next`.
+2. Nessa pasta, rode `npm install` e `npm start` e teste em `http://localhost:2567`, inclusive com duas janelas (uma anônima).
+3. Só depois de aprovar, envie os arquivos ao repositório do GitHub ligado ao Render. Se o *Auto-Deploy* estiver ligado, o Render publica sozinho a cada envio para a branch configurada; para testar antes, use outra branch ou desligue o *Auto-Deploy* temporariamente.
+4. **Não envie `server/node_modules`** nem `server/data/`: a primeira é recriada pelo `npm install` na hospedagem; a segunda guarda contas locais de teste. O envio pela página do GitHub aceita até **100 arquivos por vez**: se der erro, envie em partes (por exemplo, primeiro `assets/` e `vendor/`, depois `server/`, depois o resto).
+5. As variáveis do Render (`NODE_ENV=production`, `TRUST_PROXY=true`) **não mudam**. Há uma variável **nova e opcional**, `DATA_DIR` (pasta da economia; ver `DEPLOY.md`).
+6. Clientes antigos abertos durante a atualização recebem "Versão do servidor incompatível" (protocolo **4**) e precisam recarregar a página.
+
+---
+
+## Novidades da 3.0
+
+### Operadores humanos
+
+Quatro operadores, todos humanos, com esqueleto *Biped* de 80 ossos e malha com pele (*skinning*):
+
+| Operador | Função | Modelo de origem (Microsoft Rocketbox, MIT) |
+|---|---|---|
+| **GAVIÃO** | Assalto | `Military_Male_01` |
+| **BASALTO** | Defesa | `Military_Male_04` |
+| **CORVO** | Reconhecimento | `Military_Male_03` |
+| **LINCE** | Especialista | `Military_Female_01` |
+
+- **Uniforme por equipe:** ALFA usa grafite e ÔMEGA usa oliva. A troca é feita por shader só no tecido e no equipamento; pele e rosto não mudam. As bandeiras e insígnias reais das texturas originais foram removidas.
+- **Arquivos:** os modelos (`assets/characters/*.glb`, 1,3–1,5 MB cada, texturas WebP) carregam em segundo plano, com progresso na abertura.
+- **Falha de carregamento:** se os modelos não carregarem, o jogo continua com silhuetas simplificadas e um aviso.
+- **Onde aparecem:** no fundo do menu, no visualizador de operadores, nos jogadores remotos online e nos soldados do treinamento.
+- **Aparência apenas:** operador e arma não dão vantagem de atributos.
+
+### Animação (`characters/human.js`)
+
+- **Locomoção por captura de movimento:** parado, andar, andar rápido, trote, corrida e sprint. A mistura acompanha a velocidade real (0,98 a 5,53 m/s) com fase sincronizada, então os pés não deslizam. Há sentido para frente e para trás e o deslocamento lateral acompanha a direção.
+- **Agachamento:** camada aditiva, funciona parado ou andando.
+- **Corpo superior procedural:**
+  - torção do tronco para onde a mira aponta (as pernas seguem o movimento);
+  - inclinação com o *pitch*;
+  - postura de tiro com o ombro esquerdo à frente;
+  - prontidão baixa ao correr.
+- **Armas nas mãos:**
+  - IK de dois ossos nos dois braços com vetor de polo, a mão direita na empunhadura e a esquerda no guarda-mão;
+  - orientação das mãos calibrada e dedos fechados;
+  - funciona com fuzil, SMG e pistola.
+- **Combate:** recuo por disparo, reação a dano (mola amortecida) e alerta luminoso antes do disparo dos bots.
+- **Eliminação:** joelhos cedem, queda com pivô nos pés e arma que cai separada. O corpo fica alguns segundos e some (online, 2,4 s).
+- **Nível de detalhe:** soldados a mais de 30 m e fora de combate atualizam a pose a 20 Hz. O acerto usa as hitboxes da simulação, não o esqueleto, então nada muda na jogabilidade.
+
+### Marca e abertura
+
+- **Marca:** símbolo octogonal com o "Z" e marcas ciano, logotipo geométrico "OPERATION ZERO" e versões horizontal clara/escura, empilhada, símbolo claro/escuro e favicon, em `assets/branding/` (SVG).
+- **Abertura (~7 s):**
+  - a câmera voa sobre o mapa até o operador do menu enquanto o símbolo e o logotipo se formam;
+  - **PULAR INTRO**, **Esc**, **Espaço** ou **Enter** pulam;
+  - a opção "Não mostrar a abertura nas próximas vezes" fica salva;
+  - com **animações reduzidas** (do sistema ou das configurações) não há voo de câmera e a abertura dura ~2,6 s;
+  - a barra de progresso mostra o carregamento dos operadores;
+  - se os modelos demorarem, a abertura espera no máximo 14 s e segue.
+
+### Menu principal
+
+- **Barra superior:** INÍCIO, JOGAR, OPERADORES, ARSENAL, MAPAS e CONFIGURAÇÕES; perfil local (nome + kit); estado do servidor (consulta `/health` e `/api/rooms`); silenciar e tela cheia.
+- **Fundo do menu:** o operador escolhido no mapa real, com câmera cinematográfica e ambiente sonoro sintetizado.
+- **Teclado:** ← → navegam pela barra, ↑ ↓ percorrem listas, **Esc** volta ao INÍCIO.
+- **JOGAR:**
+  - os modos reais da tabela acima;
+  - busca pública por modo;
+  - sala personalizada com **modo e mapa**;
+  - entrada por código;
+  - lista de partidas públicas com o mapa de cada uma.
+- **OPERADORES:**
+  - visualizador 3D com câmera própria (arrastar para girar, roda do mouse ou botões para aproximar);
+  - prévia dos dois uniformes;
+  - seleção salva no perfil.
+  - **Dentro do lobby** (botão TROCAR OPERADOR), a escolha é enviada ao servidor, que valida e aplica. No lobby a troca é imediata; em partida, vale a partir do próximo surgimento.
+- **ARSENAL:**
+  - categorias Pistolas, Submetralhadoras, Fuzis, Precisão e Equipamentos;
+  - visualizador 3D com o **mesmo modelo** usado em jogo, com giro, zoom e INSPECIONAR;
+  - atributos calculados dos números reais da simulação: dano, cadência, tempo para eliminar, precisão parado e andando, recuo, carregador, recarga e alcance;
+  - **comparação** com a arma equipada (marcas âmbar) e EQUIPAR.
+  - A categoria **Precisão** está vazia e diz isso; a pistola e a fumaça aparecem como "sempre incluídas" e não fingem ser equipáveis.
+- **MAPAS:**
+  - planta de cada mapa gerada da colisão real, com setores, objetivos e lados das equipes;
+  - **VER MAPA** coloca o mapa no fundo do menu;
+  - **JOGAR NESTE MAPA** abre JOGAR com o mapa selecionado.
+
+### Armas jogáveis
+
+| Arma | Slot | Dano | Cadência | Carregador | Observação |
+|---|---|---|---|---|---|
+| **VX-9 RANGER** (fuzil) | 1 | 34 | 585/min | 25 + 100 | 3 tiros no corpo; mira óptica |
+| **SV-4 VESPA** (submetralhadora) | 1 | 24 | 798/min | 32 + 128 | nova; supressor; mais precisa em movimento |
+| **K-2 SIDEARM** (pistola) | 2 | 26 | semiautomática | 12 + 48 | sempre no kit |
+
+- **Escolha da primária:** fuzil ou SMG no arsenal.
+- **Validação no servidor:** o servidor valida a arma escolhida (`shared/catalog.js`) e aplica cadência, dano, munição e dispersão da arma realmente equipada. Um identificador desconhecido é recusado.
+- **Modelos compartilhados:** a primeira pessoa, os personagens 3D e o arsenal usam o mesmo modelo (`weapon-models.js`).
+
+### Mapas
+
+| Mapa | Colisores | Modos | Destaques |
+|---|---|---|---|
+| **FOUNDRY-7** (aprimorado) | 187 | Treinamento, Equipes, Tático | Mesma jogabilidade da 2.0 (colisão idêntica). Detalhes visuais novos sem colisão: tubulações, eletrocalhas, caixas elétricas, extintores, placas de rota de fuga, marcas de desgaste e luminárias extras. |
+| **PORTO VESPER** (novo) | 193 | Equipes, Tático | Complexo portuário: portaria, pátio norte, armazém 3 (objetivo A), corredor de contêineres empilhados, cais de carga (objetivo B), cais aberto com guindaste e água. Tema de céu/luz próprio. |
+
+- **Uma definição por mapa:** cada mapa (`shared/maps/*.js`) define geometria, setores, objetivos, surgimentos e tema. A **mesma** definição gera o visual no cliente e a colisão no servidor.
+- **Mapa da sala:** o anfitrião escolhe o mapa ao criar a sala; o servidor valida e o envia no estado da sala, então todos os jogadores carregam o mesmo mapa.
+- **Partida rápida:** entra em qualquer sala pública do modo; se precisar criar uma, usa o mapa preferido.
+- **Treinamento:** acontece sempre na Foundry-7.
+- **Verificação automática:** testes confirmam que os surgimentos não ficam dentro de sólidos e que todo o piso alcançável é conectado (*flood fill*) nos dois mapas.
+
+### Minimapa e mapa tático
+
+- **Minimapa:** desenhado da planta de colisão do mapa carregado, girado com o norte para cima, com a seta do jogador, aliados (online), objetivos, munição e o dispositivo instalado.
+- **Mapa tático:** tecla **M** (configurável) ou botão na pausa, com zoom de 1×, 1,6× e 2,5×.
+- **Sem inimigos:** o minimapa **nunca recebe posições inimigas**. Só você e os aliados são desenhados; um teste E2E confirma isso.
+
+### Mira
+
+- **Editor:**
+  - tipos cruz, T, ponto, círculo e divisa;
+  - tamanho, comprimento, espessura e distância do centro;
+  - cor e opacidade; contorno (espessura e cor);
+  - ponto central (tamanho e opacidade);
+  - expansão com movimento e com disparo, ligada à **dispersão real da arma**;
+  - mostrar ao mirar com mira óptica e durante a recarga.
+- **Presets:** Clássica, Ponto, Compacta, Aberta, Tática e Circular. Qualquer ajuste vira **Personalizada**.
+- **Prévia:** desenhada pela **mesma função** da partida (`crosshair.js`), com fundos de cena, escuro e claro e SIMULAR DISPAROS.
+- **Código compartilhável** `OZX1-…`: COPIAR e IMPORTAR, validado (código inválido é recusado com aviso).
+
+### Configurações (aplicadas na hora e salvas no navegador)
+
+- **Controles:** sensibilidade horizontal; multiplicador vertical; sensibilidade ao mirar; inverter eixo Y; **remapeamento de teclas** (uma tecla não fica em duas ações).
+- **Vídeo:** FOV; qualidade; escala de renderização (50–100%); sombras (conforme qualidade, desligadas, 1024, 2048 ou 4096); partículas e efeitos; limite de FPS (30–144 ou vsync); mostrar FPS; reduzir efeitos pesados (clarões e partículas); tela cheia.
+- **Áudio:** canais geral, efeitos, interface e música/ambiente; silenciar.
+- **Mira:** o editor acima.
+- **Interface:**
+  - escala da HUD; feed de eliminações;
+  - minimapa: ligado/desligado, escala, opacidade e posição;
+  - alto contraste; animações reduzidas (sistema/ligado/desligado);
+  - pular a abertura.
+- **Jogo:** soldados do treinamento revidam.
+- **Restaurar padrão:** cada aba tem RESTAURAR PADRÃO DA ABA. Valores salvos ou importados passam por validação (`settings.js`) antes de serem usados.
+
+### HUD e áudio
+
+- **HUD:** mapa e setor atual; vida e estado de movimento; munição e arma, com animação ao trocar; cartão da habilidade (treme quando a habilidade é recusada); marcador de acerto; feed; indicadores de dano; FPS opcional.
+- **HUD online:** placar, tempo, rodada, ping e **E/M** do jogador.
+- **Áudio:** continua 100% sintetizado (Web Audio). Agora há canais separados, sons de interface (passar o mouse, confirmar, recusar), o impacto da abertura e um ambiente grave no menu. O áudio só começa após o primeiro clique ou tecla, como exigem os navegadores.
 
 ---
 
 ## Como testar com dois jogadores
 
-**No mesmo computador:**
+1. Rode `npm start` e abra **http://localhost:2567** em duas janelas (uma normal e uma anônima).
+2. **Janela 1:** JOGAR → nome → em PARTIDA PERSONALIZADA escolha modo e mapa → **CRIAR SALA**. O lobby mostra o código de 5 caracteres (botão COPIAR), o mapa e o kit de cada jogador.
+3. **Janela 2:** JOGAR → nome → digite o código → **ENTRAR**.
+4. No lobby, cada um pode usar **TROCAR OPERADOR / TROCAR ARMA**; **Esc** ou VOLTAR AO LOBBY retorna.
+5. O anfitrião clica em **INICIAR PARTIDA**. Clique na tela para capturar o mouse.
 
-1. Rode `npm start`.
-2. Abra **http://localhost:2567** em duas janelas. Use uma janela normal e uma anônima, ou dois navegadores diferentes, porque cada aba guarda a própria identidade de reconexão.
-3. Janela 1: **JOGAR ONLINE** → digite um nome → escolha o modo → **CRIAR SALA PRIVADA**. O lobby mostra um **código de 5 caracteres** (ex.: `27ZD5`) com o botão **COPIAR**.
-4. Janela 2: **JOGAR ONLINE** → nome → digite o código → **ENTRAR COM CÓDIGO**.
-5. Na janela 1, que é a do anfitrião, clique em **INICIAR**. Clique na tela do jogo para capturar o mouse.
+**Rede local:** no outro computador, abra `http://IP-DO-SERVIDOR:2567` (descubra o IP com `ipconfig`). Libere o Node.js no firewall em "Redes privadas".
 
-**Em dois computadores da mesma rede (Wi-Fi/cabo):**
-
-1. No computador que roda `npm start`, descubra o IP local: `ipconfig` no Windows (campo "Endereço IPv4"), ou `ip addr`/`ifconfig` no Linux/macOS.
-2. No outro computador, abra `http://IP-DO-SERVIDOR:2567`, por exemplo `http://192.168.0.15:2567`.
-3. Se não conectar, libere a porta 2567 no Firewall do Windows. Na primeira execução, o Windows costuma perguntar se o Node.js pode usar a rede: permita em "Redes privadas".
-
-**Partida pública:** em **JOGAR ONLINE**, clique em **PARTIDA RÁPIDA**. O jogador entra em uma sala pública com vaga no modo escolhido, ou uma sala nova é criada. Salas públicas começam sozinhas quando todos estão prontos ou 20 s depois de haver jogadores suficientes. A lista **SALAS PÚBLICAS** mostra as salas abertas reais (nunca jogadores fictícios).
-
-## Salas privadas
-
-- Ao criar, o servidor gera um código de 5 caracteres sem caracteres ambíguos (sem `0/O/1/I`), único entre as salas ativas.
-- Para compartilhar, clique em **COPIAR** no lobby e envie o código. A outra pessoa digita o código em **ENTRAR COM CÓDIGO**; maiúsculas e minúsculas tanto faz.
-- Salas privadas não aparecem na lista pública nem na partida rápida.
-- Somente o **anfitrião** vê **INICIAR**. Se ele sair, outro jogador assume.
-- Código inexistente, sala cheia, partida tática em andamento e versão incompatível geram mensagens claras.
-
----
-
-## Controles
+## Controles (padrão — todos remapeáveis, exceto mouse e Esc)
 
 | Tecla | Ação |
 |---|---|
-| W A S D | Mover (diagonal normalizada) |
-| Mouse | Olhar |
-| Botão esquerdo | Disparar (automático no fuzil, semiautomático na pistola) |
-| Botão direito | Mirar (ADS: zoom, menos dispersão, movimento mais lento) |
-| Shift | Caminhar devagar e em silêncio (sem passos) |
-| C ou Ctrl | Agachar (mais precisão, menor silhueta) |
+| W A S D | Mover |
+| Mouse / botão esquerdo / botão direito | Olhar / disparar / mirar |
+| Shift | Caminhar em silêncio |
+| C ou Ctrl | Agachar |
 | Espaço | Pular |
 | R | Recarregar |
-| E | Habilidade **Névoa Ciano** (fumaça) |
-| 1 / 2 | Fuzil VX-9 Ranger / Pistola K-2 Sidearm |
-| F (segurar) | Online, modo tático: instalar / desarmar o dispositivo |
-| Tab (segurar) | Online: placar |
-| Esc | Liberar o mouse e abrir o menu (offline pausa; online a partida continua) |
+| E | Névoa Ciano |
+| 1 / 2 | Arma primária / pistola |
+| F (segurar) | Tático: instalar / desarmar |
+| Tab (segurar) | Placar online |
+| M | Mapa tático |
+| Esc | Liberar o mouse / pausa (online a partida continua) |
 
-> **Atenção:** `Ctrl + W` fecha a aba em qualquer navegador e não pode ser bloqueado por páginas. Por isso o jogo pede confirmação antes de sair durante uma sessão, e recomendamos usar **C** para agachar.
+> `Ctrl + W` fecha a aba em qualquer navegador e não pode ser bloqueado; o jogo pede confirmação antes de sair durante uma partida. Prefira **C** para agachar.
 
 ---
 
@@ -112,217 +314,199 @@ npm test         # 39 testes do servidor (node:test), incluindo integração com
 
 ```
 operation-zero/
-├── index.html, style.css         telas (menu, online, lobby, fim), HUD, placar, sobreposições
-├── game.js                       renderer, estados, loop, integração offline/online
-├── config.js                     parâmetros do cliente (derivados de shared/game-config.js)
-├── client-config.js              URL do servidor para cliente hospedado separadamente (vazio = mesma origem)
-├── player.js, weapon.js, abilities.js, map.js, enemies.js, effects.js, audio.js, ui.js, utils.js
-│                                 sistemas da v1 (preservados; agora usam os módulos compartilhados)
-├── shared/                       código usado pelo NAVEGADOR e pelo SERVIDOR (mesma regra nos dois lados)
-│   ├── game-config.js            armas, movimento, fumaça, rede, partidas
-│   ├── arena-layout.js           layout único da arena → visual (cliente) e colisão (ambos); spawns, objetivos A/B
-│   ├── arena-collision.js        colisores AABB + raycast (sem Three.js)
-│   ├── movement.js               física do jogador (passo determinístico)
-│   ├── weapon-rules.js           dispersão, recuo, dano
-│   ├── hitboxes.js               cabeça/corpo/pernas
-│   ├── smoke-rules.js            posicionamento e bloqueio de visão da fumaça
-│   ├── protocol.js               versão, mensagens, fases, equipes, botões, validação de códigos
-│   └── math.js
-├── online/                       camada multiplayer do cliente
-│   ├── connection.js             descoberta do servidor, SDK, criar/entrar/partida rápida, erros
-│   ├── lobby.js                  telas online e lobby (dados reais do servidor)
-│   ├── match.js                  predição, reconciliação, interpolação, HUD online, placar
-│   ├── avatars.js                personagens remotos com cores de equipe e nomes
-│   └── spike.js                  dispositivo do modo tático no mundo (farol e bipe)
-├── server/
-│   ├── package.json              dependências com versões fixas
-│   ├── src/index.js              HTTP (Express) + WebSocket (Colyseus), /health, /api, origens, arquivos estáticos
-│   ├── src/config.js             variáveis de ambiente (+ leitura de .env)
-│   ├── src/rooms/MatchRoom.js    sala: entrada, autenticação, reconexão, passo fixo, mensagens
-│   ├── src/schema/MatchState.js  estado sincronizado (jogadores, fumaças, dispositivo, placar)
-│   ├── src/systems/              simulação, combate, habilidades, fluxo da partida
-│   ├── src/modes/                tdm.js, tactical.js
-│   ├── src/services/             validação, matchmaking/códigos, spawns, logs
-│   └── tests/                    testes unitários e de integração
-├── package.json                  scripts da raiz (install/start/test delegam para server/)
-├── .env.example, Dockerfile, .dockerignore, DEPLOY.md
-└── README.md
+├── index.html, style.css          telas (carregamento, abertura, menu, pausa, configurações, lobby, fim), HUD
+├── game.js                        renderer, estados, loop, troca de mapa, operador do menu, aplicação das preferências
+├── settings.js                    preferências: padrões, validação, persistência, presets e código da mira, perfil local
+├── crosshair.js                   desenho da mira (HUD e prévia usam a mesma função)
+├── weapon-models.js               modelos das armas (1ª pessoa, personagens e arsenal), incl. LR-12
+├── skins-render.js                acabamentos procedurais (canvas + projeção triplanar)
+├── player.js, weapon.js, abilities.js, map.js, enemies.js, effects.js, audio.js, ui.js, utils.js, config.js
+├── characters/
+│   ├── library.js                 carregamento/cache dos GLB, clips, uniformes por equipe
+│   ├── human.js                   personagem animado (locomoção, IK, recuo, dano, queda, aterrissagem)
+│   └── gear.js                    equipamento original por operador (pele rígida no esqueleto)
+├── ui/
+│   ├── menu.js                    navegação, perfil, servidor, operadores, arsenal, mapas
+│   ├── settings-panel.js          abas de configuração, teclas, editor de mira
+│   ├── intro.js                   abertura
+│   ├── studio.js                  visualizador 3D (câmera própria) de operadores e armas (com acabamento)
+│   ├── shop.js                    LOJA: caixas, abertura animada, inventário, histórico
+│   └── minimap.js                 minimapa, mapa tático e prévias dos mapas
+├── shared/                        mesmo código no navegador e no servidor
+│   ├── catalog.js                 operadores, armas primárias e mapas válidos (o servidor valida contra ele)
+│   ├── maps/foundry7.js, vesper.js, parts.js
+│   ├── arena-layout.js, arena-collision.js, movement.js, weapon-rules.js, hitboxes.js, smoke-rules.js
+│   ├── game-config.js, protocol.js (protocolo 4), math.js, skins.js (catálogo de acabamentos)
+│   └── ai/navgrid.js              grade de navegação gerada da colisão (bots)
+├── online/                        conexão, conta (account.js), lobby, partida (predição/reconciliação/interpolação), avatares, dispositivo
+├── server/                        Colyseus + Express (salas, simulação, combate, modos, validação, testes)
+│   ├── src/ai/                    bots: cérebro, gerenciador, dificuldades
+│   └── src/economy/               contas, recompensas, loja, armazenamento (DATA_DIR)
+├── assets/characters, assets/animations   GLB (Microsoft Rocketbox, MIT — ver ASSET_CREDITS.md)
+├── assets/branding                marca (SVG)
+├── vendor/three                   three.js r160 + GLTFLoader/SkeletonUtils/BufferGeometryUtils (MIT)
+└── NEXT_GEN_AUDIT.md, ECONOMY.md, ART_DIRECTION.md, ASSET_CREDITS.md, DEPLOY.md, Dockerfile, .env.example
 ```
 
-### Fluxo de rede
+### Rede e segurança (inalteradas na essência desde a 2.0)
 
-```
-Navegador                                        Servidor (autoritativo, 60 Hz)
-─────────                                        ──────────────────────────────
-entrada → quadro {mf, mr, botões, yaw, pitch} ─▶ fila por jogador (máx. 32, saneada)
-predição local com shared/movement.js            mesmo shared/movement.js + colisão compartilhada
-                                                 armas, dano, fumaça, objetivos, placar
-reconciliação ◀── patch de estado (20 Hz) ────── último quadro processado por jogador
-interpolação dos outros (100 ms de atraso)
-efeitos imediatos do próprio tiro          ◀──── tiro/acerto/eliminação confirmados
-```
-
-- **Servidor autoritativo:** o cliente envia apenas intenções (teclas, botões, ângulo de visão). Posição, vida, munição, dano, eliminações, fumaças, objetivos e placar são decididos no servidor.
-- **Passo fixo:** `setFixedTimestep` a 60 Hz; patches a cada 50 ms.
-- **Predição + reconciliação:** cada quadro enviado é simulado localmente. A cada patch, o jogador volta à posição oficial e os quadros ainda não confirmados são reaplicados. Diferenças pequenas são suavizadas na câmera; erros acima de 2,5 m (teleporte, surgimento) são corrigidos na hora. Yaw e pitch são quantizados em float32 nos dois lados, para que a reaplicação seja idêntica.
-- **Interpolação:** os outros jogadores são desenhados 100 ms no passado, entre dois snapshots no tempo do servidor. Um novo surgimento não interpola a partir da posição anterior.
-- **Compensação de atraso limitada:** o servidor guarda 300 ms de histórico de posições (`allowRewindState`) e testa o tiro contra as posições que o atirador estava vendo (último snapshot recebido por ele, limitado a 300 ms). Paredes e o estado atual (vivo/morto) não retrocedem.
-- **Validação do tiro:** cadência e munição no servidor, origem = olho oficial, direção = ângulo do quadro com tolerância de dispersão (cone máximo da arma + folga). Fora disso, o tiro é rejeitado e registrado.
-- **Reconexão:** queda inesperada reserva a vaga por 20 s (`allowReconnection`). O SDK tenta reconectar sozinho, e a HUD mostra "RECONECTANDO" e depois "CONECTADO" ou "CONEXÃO PERDIDA". Uma saída voluntária libera a vaga na hora.
-
-### Sistemas multiplayer
-
-- **Lobby real:** lista de jogadores por equipe, anfitrião, pronto/aguardando, troca de equipe, contagem mínima de jogadores e contagem regressiva.
-- **Equipes balanceadas:** novos jogadores vão para a equipe menor. A troca manual só é aceita se não desequilibrar as equipes em mais de 1.
-- **Matchmaking público:** salas por modo (`filterBy(['mode'])`), trancadas quando cheias ou durante uma partida tática. A partida rápida usa `joinOrCreate`.
-- **Fumaça compartilhada:** o servidor valida o ponto (mesma regra da v1, `shared/smoke-rules.js`), controla duração e recarga e replica a nuvem para todos. A nuvem esconde os personagens visualmente, e os nomes de inimigos atrás ou dentro dela não são mostrados.
-- **Colisão compartilhada:** o mesmo `shared/arena-layout.js` gera o visual do cliente e os colisores do servidor (187 AABB).
-- **HUD online:** placar das equipes, tempo, fase, rodada, ping com indicador de qualidade, equipe, estado da conexão, objetivo da equipe, barra de instalação/desarme, tela de eliminado, faixa de fim de rodada, feed com eliminações confirmadas e placar completo (Tab) com E/M/pontos/ping.
-- **Segurança:**
-  - entradas saneadas (limites de valores, NaN, ângulos);
-  - orçamento de quadros por tempo real (*anti-speed-hack*) e quadros ociosos quando o cliente para de enviar;
-  - limite de taxa em mensagens;
-  - nomes saneados e únicos;
-  - versão de protocolo checada;
-  - conexões limitadas por IP;
-  - origens WebSocket checadas;
-  - identidade duplicada recusada;
-  - limite de salas;
-  - arquivos servidos por lista de permissões (`server/`, `.env` e `node_modules` nunca são servidos);
-  - nenhum segredo enviado ao cliente.
-
-### Funcionalidades preservadas da v1
-
-O modo offline continua completo e foi testado de novo após a refatoração (ver [Testes](#testes-executados)). Os módulos que passaram para `shared/` (layout da arena, colisão, movimento, regras de arma e fumaça) mantêm exatamente os mesmos valores.
-
-- **Fluxo de telas:** carregamento com progresso → menu com câmera cinematográfica sobre a arena → pronto (captura do mouse) → jogando → pausa → fim de sessão (vitória/derrota com estatísticas). Erros de WebGL, de carregamento de módulos e de abertura via `file://` mostram uma tela explicativa.
-- **Movimento:** aceleração/desaceleração, corrida/caminhada/agachamento, pulo com *buffer* e *coyote time*, gravidade, subida de degraus (até 0,46 m), aderência ao descer escadas, colisão AABB com sub-passos (não atravessa paredes mesmo em alta velocidade), checagem de teto ao levantar. O PointerLock só fornece o mouse; a física é própria (`player.js`).
-- **Armas:** fuzil automático (25/100, 9,75 tiros/s, 34 de dano → 3 tiros no corpo) e pistola semiautomática. Hitscan a partir do centro da câmera (o centro da mira é o ponto de impacto). Cadência por tempo de jogo, munição/reserva reais, recarga com estágios de som, recarga automática, bloqueio de disparo na recarga/troca/pausa, R repetido não duplica a recarga.
-- **Precisão:** dispersão base por estado (agachado < parado < caminhando < correndo < no ar), *bloom* por disparo consecutivo com recuperação gradual, multiplicador de ADS. Amostragem com PRNG determinístico (reproduzível). A mira de 4 linhas abre e fecha com a dispersão projetada na tela.
-- **Recuo:** padrão determinístico por disparo (vertical + oscilação lateral), aplicado à câmera e à arma, com recuperação exponencial independente do FPS. Puxar o mouse para baixo compensa o recuo sem desalinhar a visão de forma permanente.
-- **Bots:** 14 robôs procedurais (corpo, cabeça com visor, braços, arma), 4 deles em trilhos móveis. Hitboxes de cabeça (×3,5), corpo e pernas, brilho de dano, recuo ao ser atingido, animação de morte, contagem única de eliminação, reaparecimento após 3,5 s. Estados de combate: ocioso → reação → aviso visual/sonoro (visor pisca) → rajada → recarga. No máximo 2 atacantes simultâneos; nunca atiram na área de preparação.
-- **Névoa Ciano (E):** ponto calculado pela mira (máx. 17 m), recuado de paredes, assentado no chão, recusado se estiver obstruído, fora da arena ou perto demais (com feedback na tela). Lançamento em arco, nuvem com 34 camadas de partículas, anel de solo, entrada/saída suaves, **5 s de tempo de jogo** e recarga de 14 s exibida na HUD. Dentro da nuvem a tela recebe um filtro azul.
-- **Regra da fumaça (documentada):** a fumaça **bloqueia a visão dos bots**: eles não iniciam nem mantêm ataques através dela, e um jogador dentro dela não é visto. Ela **não bloqueia os disparos do jogador**: balas atravessam a fumaça, como em shooters táticos, mas você também não enxerga bem através dela.
-- **Estações de munição:** duas caixas com ícone holográfico (preparação e junção) reabastecem a reserva por proximidade (recarga de 12 s por estação).
-- **Efeitos:** partículas reutilizáveis (faíscas aditivas e poeira), marcas de impacto em *ring buffer* (90), traçantes do jogador e dos bots, clarão de boca (malha + luz sempre presente, sem recompilar shaders), explosão e anel de eliminação, partículas de surgimento.
-- **Áudio procedural (Web Audio):** disparos, recarga, vazio, impactos por material, acertos (corpo/cabeça), eliminação, passos, pouso, fumaça, tiros e avisos dos bots com pan estéreo, dano, estação de munição, vitória/derrota. Inicializado apenas após clique. Se o navegador não tiver Web Audio, tudo vira operação nula e o jogo continua.
-- **HUD:** arena/setor atual, eliminações/meta, tempo, objetivo, vida com barra e estado de movimento, munição/reserva/arma/slots, barra de recarga, cartão da habilidade com cooldown radial, marcador de acerto (corpo/cabeça/eliminação), feed de eliminações, mensagens centrais, vinheta e indicadores direcionais de dano, contador de FPS opcional. O DOM só é tocado quando um valor muda.
-- **Configurações (persistidas em `localStorage`):** sensibilidade, FOV, volume, qualidade gráfica (baixa/média/alta: resolução e sombras), cor da mira, bots revidam, mostrar FPS.
-- **Visual:** materiais PBR com texturas procedurais em canvas (concreto com juntas e furos de tirante, piso com placas e fissuras, painéis metálicos com rebites, contêineres corrugados, caixas, faixas de segurança), *bump maps*, céu de entardecer em shader, mapa de ambiente PMREM gerado do céu, sol com sombras suaves, luzes quentes/frias localizadas, neblina, *skyline* industrial ao fundo, sinalização por setor. A geometria estática é fundida por material (poucas draw calls).
+- **Servidor autoritativo a 60 Hz:**
+  - o cliente envia só intenções (teclas, botões, ângulos);
+  - posição, vida, munição, dano, eliminações, fumaças, objetivos e placar são decididos no servidor;
+  - patches a 20 Hz;
+  - predição e reconciliação do próprio jogador;
+  - interpolação de 100 ms dos demais;
+  - compensação de atraso limitada a 300 ms.
+- **Protocolo 3:**
+  - `operator` e `primary` na entrada e na mensagem `loadout` (com limite de taxa);
+  - `map` na criação da sala;
+  - cada identificador é validado contra `shared/catalog.js`, e valores desconhecidos são recusados;
+  - o kit troca no lobby ou no próximo surgimento;
+  - o servidor usa a arma realmente equipada para validar cadência, dano e munição.
+- **Arquivos estáticos por lista de permissões:**
+  - entram só o código do cliente, `assets/` (GLB e SVG) e `vendor/three/`;
+  - `server/`, `node_modules`, `.env` e arquivos ocultos nunca são servidos (há teste).
+- **Demais proteções (desde a 2.0):** entradas saneadas, orçamento de quadros contra aceleração, limite por IP, origens WebSocket checadas, nomes únicos e saneados, reconexão com vaga reservada por 20 s.
 
 ---
 
 ## Testes executados
 
-Todos foram executados neste ambiente (Linux, Node 22, Chromium headless via Playwright com WebGL por software/SwiftShader). Nos testes de navegador, o URL do CDN do Three.js foi redirecionado para uma cópia local idêntica (`three@0.160.0`), porque o ambiente não acessa o jsDelivr. Todos os testes multiplayer usaram `localhost`. Os roteiros de navegador (Playwright) foram executados neste ambiente de desenvolvimento e não fazem parte do projeto entregue; os testes do servidor estão em `server/tests/` e rodam com `npm test`.
+Executados neste ambiente de desenvolvimento: Linux, Node 22, Chromium headless (Playwright) com WebGL **por software** (SwiftShader). Os testes multiplayer usaram o servidor real em `localhost` (não pela internet). Os roteiros de navegador ficaram no ambiente de desenvolvimento e não fazem parte do pacote; os testes do servidor estão em `server/tests/` e rodam com `npm test`.
 
 | Conjunto | Resultado |
 |---|---|
-| `npm test`: servidor (13 compartilhados + 19 combate/modos + 7 integração com clientes Colyseus reais) | **39/39** |
-| E2E online TDM: duas sessões de navegador | **19/19**, sem erros no console |
-| E2E online tático: duas sessões de navegador | **13/13**, sem erros no console |
-| Regressão offline (determinística) | **36/36**, sem erros no console |
-| Fluxo offline com cliques reais (Pointer Lock, pausa, retomar, configurações, sair, sem Web Audio, CDN bloqueado) | aprovado |
+| `npm test`: servidor | **83/83** |
+| Interface (abertura obrigatória, menu, créditos, loja, arsenal com acabamentos, LR-12 com luneta, configurações, persistência, mapas, limpeza) | **48/48** |
+| Regressão do treinamento offline (física, armas, soldados, fumaça, recarga, reinício) | **36/36** |
+| E2E online, duas sessões, **Foundry-7**, com conta e recompensa | **29/29** |
+| E2E online, duas sessões, **Porto Vesper**, com conta e recompensa | **29/29** |
+| E2E busca pública com **bots do servidor** | **10/10** |
 
-**Servidor (`npm test`, 39 testes):**
+Detalhe dos testes do servidor:
 
-- **Compartilhados (13):**
-  - 187 colisores gerados do layout;
-  - spawns válidos; objetivos A/B acessíveis;
-  - gravidade, pulo sem repetição no ar, paredes (inclusive em alta velocidade), escada;
-  - movimento determinístico (base da reconciliação);
-  - regras de posicionamento da fumaça;
-  - hitboxes;
-  - dano e dispersão;
-  - saneamento de entradas maliciosas (NaN, infinitos, ângulos enormes, bits desconhecidos);
-  - validação de nomes, códigos e opções.
-- **Combate e armas (19, com os sistemas reais da sala):**
-  - tiro válido desconta munição e confirma para os dois lados;
-  - 3 tiros no corpo eliminam, com eliminação única, placar e retorno;
-  - tiro na cabeça elimina;
-  - parede bloqueia o dano;
-  - cadência acelerada rejeitada sem gastar munição;
-  - recarga sem tiros, R repetido não duplica;
-  - munição nunca negativa e recarga automática;
-  - direção fora do cone de precisão rejeitada;
-  - morto não atira e fogo amigo desligado;
-  - disparos fora da fase de combate rejeitados.
-- **Compensação de atraso:** acerta na posição vista até 300 ms atrás, com o `Rewind` real do Colyseus; um pedido mais antigo é limitado à janela. Uma mutação do teste confirmou que ele falha sem a compensação.
-- **Estação de munição:** proximidade, recarga de 12 s, sem efeito à distância.
-- **Fumaça:** aprovada pelo servidor, com recarga autoritativa, dura 5 s e é removida.
-- **Anti-aceleração:** entradas em excesso não simulam mais rápido que o tempo real; colisão continua valendo no servidor.
-- **Modos:**
-  - TDM: limite de pontos encerra a partida uma vez;
-  - tático: instalação + detonação dão a rodada aos atacantes;
-  - desarme dá a rodada aos defensores; eliminação total encerra a rodada;
-  - sem entrada tardia; a partida termina ao atingir as rodadas.
-- **Integração com clientes Colyseus reais por WebSocket (7):**
-  - `/health` e estado inicial;
-  - erros claros (código inexistente, versão incompatível, nome inválido, aba duplicada, sala cheia);
-  - dois jogadores em equipes equilibradas;
-  - início pelo anfitrião; movimento e orientação sincronizados;
-  - combate autoritativo visto pelos dois;
-  - saída e reconexão sem entidades fantasmas ou duplicadas; sala vazia encerrada;
-  - partida rápida reúne jogadores do mesmo modo e não mistura modos; listagem;
-  - entrada tardia bloqueada em partida tática.
+| Arquivo | Testes | Conteúdo |
+|---|---|---|
+| `precision.test.js` | 10 | precisão P1–P10 |
+| `bots.test.js` | 12 | bots |
+| `economy.test.js` | 11 | economia e API |
+| `weapons.test.js` | 5 | LR-12 e acabamentos |
+| demais | 45 | testes da 3.0 |
 
-**E2E TDM (duas janelas):**
+Em todos os roteiros de navegador, o console ficou **sem erros**. Na regressão offline aparece um `ERR_CONNECTION_REFUSED` esperado: o cliente procura o servidor também em `:2567`, que não existe nesse teste.
 
-- **Lobby:** sala privada com código; código inexistente → "Sala não encontrada"; lobby com os dois jogadores em equipes diferentes; só o anfitrião vê INICIAR; partida começa nas duas sessões.
-- **Visibilidade e movimento:**
-  - cada jogador vê o personagem 3D do outro na posição oficial;
-  - predição reconciliada;
-  - movimento do outro interpolado até a posição do servidor (5,7 m);
-  - orientação sincronizada.
-- **Combate e placar:**
-  - dano e eliminação aplicados pelo servidor;
-  - munição oficial = HUD;
-  - eliminação anunciada nas duas sessões e contada uma vez;
-  - placar sincronizado;
-  - retorno após o atraso.
-- **Fumaça:** aparece nas duas sessões e desaparece em ambas após 5 s.
-- **Interface e saída:** placar Tab; pausa online com SAIR DA PARTIDA (sem REINICIAR); saída de um jogador sem entidade fantasma.
-- **Rede:** 0 correções de predição fora dos teleportes do teste.
+**Detalhe dos testes novos:**
 
-**E2E tático (duas janelas):**
+- **Precisão (servidor):**
+  - zonas cabeça/tronco/pernas;
+  - perto e longe;
+  - atirador andando e no ar;
+  - alvo agachado e correndo (cabeça na postura animada);
+  - parede e cobertura parcial;
+  - alvos alinhados;
+  - morte no meio da rajada;
+  - desconexão e reconexão;
+  - centro antigo da caixa não é mais cabeça.
+- **Bots (servidor):**
+  - identificação como bot;
+  - visão bloqueada por parede, campo de visão e fumaça;
+  - não atira através de parede;
+  - munição, recarga e cone aceitos pelo servidor (zero disparos recusados);
+  - dano igual à tabela da arma;
+  - não acerta tudo e erra mais de longe;
+  - Elite reage antes e acerta mais que Normal, sem mudar dano;
+  - navegação até destinos aleatórios nos dois mapas;
+  - investiga tiros ouvidos;
+  - preenchimento público e saída de bots quando pessoas entram, sem partida só de bots;
+  - controles do anfitrião só na sala privada e no lobby;
+  - defensor bot desarma;
+  - partida tática só com bots e uma pessoa ociosa chega ao fim (custo médio < 3 ms por passo).
+- **Economia (servidor):**
+  - token só como hash;
+  - abertura idempotente (pedido repetido não cobra de novo);
+  - chances conferidas estatisticamente (40 000 sorteios);
+  - repetidos → fragmentos;
+  - equipar só o que possui;
+  - recompensas e limites;
+  - pagamento único por conclusão; quem abandona não recebe; teto diário;
+  - falha de registro desfaz a operação;
+  - gravação atômica, recarga e arquivo corrompido preservado;
+  - API HTTP com acesso negado sem token.
+- **E2E com conta:**
+  - os dois jogadores entram com conta verificada pelo servidor;
+  - ao fim (adversário abandonou) a tela mostra vitória, K/D e recompensa;
+  - recompensa: +100 conclusão, +75 vitória, desempenho, com o saldo idêntico ao do servidor;
+  - uma única transação registrada; quem abandonou não recebe.
+- **E2E bots:**
+  - busca pública real;
+  - sala completada com 5 bots marcados em ~10 s;
+  - partida iniciada; os bots andam pelo mapa e combatem;
+  - o cliente vê os bots como soldados humanos;
+  - o placar mostra BOT no lugar da latência;
+  - a sala termina quando a pessoa sai.
 
-- **Preparação:** rodada 1 em preparação; objetivos diferentes por equipe; F durante a preparação não instala.
-- **Instalação:** barra de instalação real (F segurado); servidor registra o dispositivo em A.
-- **Dispositivo instalado:** o defensor vê "DISPOSITIVO ATIVO", com objetivo de desarme; dispositivo 3D visível nas duas sessões na posição oficial.
-- **Desarme:** barra de desarme; rodada vencida pelos defensores e contada uma vez.
-- **Troca de rodada:** faixa de fim de rodada nas duas sessões; dispositivo some; rodada 2 começa reiniciada.
+**Custo de renderização** (medido com `renderer.info`, independente da GPU, a 1280×720 em qualidade média, contando o passe de sombra):
+
+| Cena | Draw calls | Triângulos |
+|---|---|---|
+| Menu (Foundry-7 + operador) | 82 | 39 mil |
+| Visualizador de operadores | 39 | 24 mil |
+| Treinamento (14 soldados com equipamento) | 246–299 | 170–182 mil |
+| Porto Vesper (portaria) | 97 | 15 mil |
+
+- **CPU:** 2,8–3,1 ms por atualização do treinamento depois do aquecimento, sem renderização; memória JS ~28 MB.
+- **Servidor:** 0,08–0,17 ms por passo de 60 Hz com 6 participantes (5 bots).
+- **Otimização nova:** o equipamento dos operadores, primeiro feito como objetos ligados aos ossos, dobrava o custo de CPU. Ele virou uma malha com pele rígida animada pela GPU, uma por personagem.
 
 ## Limitações conhecidas
 
-- **Não publicado e não testado pela internet.** Latência real, perda de pacotes e NAT/firewall entre redes diferentes não foram avaliados; apenas `localhost`. Também não foi verificado com dois computadores físicos.
-- **Docker:** o `Dockerfile` foi escrito, mas não foi construído neste ambiente.
-- **FPS em GPU real não medido.** O ambiente de teste renderiza por software (1–3 FPS), então os testes de navegador avançaram a simulação por tempo real com renderização opcional desativada. A CPU gasta ~0,2 ms por atualização no offline.
-- **Escala:** um processo, salas em memória, sem Redis. Use uma instância só.
-- **Visibilidade:** todas as posições da sala são enviadas a todos os clientes. A fumaça e as paredes escondem visualmente, mas um cliente modificado poderia ler as posições (não há *culling* de visibilidade no servidor).
-- **Modo tático simplificado:** não há troca de lados no intervalo e não há portador do dispositivo (qualquer atacante pode instalar). Também não há economia nem compra de armas.
-- **Pausa online:** o menu (Esc) não pausa a partida, porque o servidor continua. O jogador fica parado e vulnerável.
-- **Ping no placar:** é informado pelo cliente (apenas exibição; não afeta regras).
-- **X-Forwarded-For:** com `TRUST_PROXY=true`, o limite por IP confia nesse cabeçalho; ative apenas atrás do proxy da hospedagem.
-- **Da v1:** áudio procedural não avaliado de ouvido; `Ctrl + W` não pode ser bloqueado; os bots (offline) usam IA simples, sem navegação; modelos procedurais, sem animação esquelética.
+- **Pasta Documentos do Windows:** este ambiente na nuvem não acessa o seu computador. O trabalho foi feito na cópia de origem do projeto (a mesma que gerou o pacote 2.0) e é entregue como pacote para substituir a pasta, seguindo [Como atualizar](#como-atualizar-sem-quebrar-a-versão-online).
+- **Nada foi publicado nem testado pela internet:** a versão online (Render) não foi alterada. Latência real e redes diferentes não foram avaliadas; dois computadores físicos também não.
+- **FPS em GPU real não medido:** o ambiente renderiza por software (abaixo de 1 FPS em quadros completos). Por isso o custo foi medido por draw calls/triângulos, e os testes avançam a simulação em tempo real com a renderização desligada.
+- **Animações:**
+  - a locomoção é captura de movimento (Rocketbox);
+  - empunhadura, mira, recuo, recarga em 3ª pessoa, reação a dano e queda são procedurais;
+  - não há animação facial, salto capturado (no ar o corpo só recolhe as pernas, de forma procedural), escalada nem corpo em 1ª pessoa (só braços/mãos procedurais);
+  - a pose de queda é simplificada (sem física de *ragdoll*).
+- **Operadores:**
+  - são cosméticos;
+  - os corpos dos quatro modelos vêm de uma biblioteca aberta (Rocketbox, MIT) e foram adaptados, **não criados do zero**;
+  - o equipamento adicional e os emblemas são originais, mas simples (peças geométricas, sem escultura de alta resolução).
+- **Armas:** quatro jogáveis (pistola, SMG, fuzil, fuzil de precisão) com modelos procedurais *low-poly*; não há miras/acessórios trocáveis.
+- **Dispersão:** o servidor confere o cone máximo de cada disparo, mas o sorteio da dispersão é do cliente. Um cliente modificado poderia atirar sempre no centro (nunca fora do cone). Ver `NEXT_GEN_AUDIT.md` (A6).
+- **Bots:**
+  - jogam TDM e tático nos dois mapas, com o fuzil ou a SMG; não usam o fuzil de precisão nem a fumaça;
+  - o treino offline continua com os soldados roteirizados da 3.0 (a IA nova roda no servidor);
+  - o equilíbrio das dificuldades foi medido em simulação (acertos por disparo de ~18% no Normal, ~21% no Difícil e ~28% no Elite em partidas simuladas de 3 min entre bots), não com jogadores reais.
+- **Economia:**
+  - conta sem recuperação: apagar os dados do navegador gera conta nova;
+  - em disco efêmero (Render gratuito) os saldos se perdem a cada deploy (ver `ECONOMY.md`);
+  - armazenamento em arquivo para um único processo.
+- **Modos:** Competitivo **não existe** (sem classificação). O tático continua simplificado como na 2.0 (sem troca de lados, sem portador do dispositivo).
+- **Mapas:**
+  - o treinamento offline existe só na Foundry-7;
+  - a partida rápida entra em qualquer sala pública do modo, mesmo que o mapa seja diferente do preferido (o mapa da sala é mostrado no lobby).
+- **Visibilidade online:** o servidor envia as posições de todos os jogadores a todos (necessário para a interpolação). O minimapa nunca as desenha, mas um cliente modificado poderia lê-las (não há *culling* de visibilidade no servidor).
+- **Áudio:**
+  - todo sintetizado e não avaliado de ouvido;
+  - pela regra dos navegadores, só toca depois do primeiro clique ou tecla, então a abertura da primeira visita pode ficar em silêncio até essa interação.
+- **Docker:** o `Dockerfile` não foi construído neste ambiente.
+- **Da 2.0:** `Ctrl + W` não pode ser bloqueado; a pausa online não para a partida; o ping do placar é informado pelo cliente.
 
 ## Publicação
 
 Veja **[DEPLOY.md](DEPLOY.md)**. Resumo:
 
-1. Use uma hospedagem com processo Node persistente e WebSocket (Render, Railway, Fly.io, VPS). **Não** use funções *serverless*.
-2. Use `npm install` como instalação e `npm start` como comando de início. A porta vem de `PORT`. Health check em `GET /health`.
-3. Defina `NODE_ENV=production` e `TRUST_PROXY=true`. Defina `ALLOWED_ORIGINS` apenas se o cliente ficar em outro domínio. Nesse caso, use também `SERVE_CLIENT=false` no servidor e preencha `client-config.js` no cliente.
-4. A hospedagem fornece HTTPS, e o cliente passa a usar `wss://` automaticamente.
-5. Depois de publicar, verifique `/health` e faça uma partida entre duas redes diferentes.
-
-### Portas e endereços
+1. Use uma hospedagem com processo Node persistente e WebSocket (Render, Railway, Fly.io, VPS); **não** use funções *serverless* (Vercel/Netlify Functions).
+2. Instalação `npm install`, início `npm start`, porta em `PORT`, health check `GET /health`.
+3. `NODE_ENV=production` e `TRUST_PROXY=true`.
 
 | Item | Valor |
 |---|---|
 | Jogo + servidor (padrão) | `http://localhost:2567` |
-| WebSocket | mesmo host/porta (`ws://`; `wss://` com HTTPS) |
-| Saúde | `GET /health` |
+| WebSocket | mesmo host/porta (`wss://` com HTTPS) |
+| Saúde | `GET /health` (inclui `protocol: 4`) |
+| Conta / loja | `POST/GET /api/account`, `GET /api/shop`, `POST /api/shop/open`, `POST /api/inventory/equip` (ver `ECONOMY.md`) |
 | Salas públicas | `GET /api/rooms` |
 | Consulta de código | `GET /api/rooms/:codigo` |
-| SDK do cliente | `GET /vendor/colyseus.js` |
 | Servidor alternativo (teste) | `?server=http://host:porta` no URL do jogo |

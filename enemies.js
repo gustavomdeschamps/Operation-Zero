@@ -1,9 +1,18 @@
-// Bots de treinamento: modelo robótico procedural, vida, hitboxes por região,
+// Bots de treinamento: soldados humanos (equipe hostil) com vida, hitboxes por região,
 // estados de combate, reações a dano, eliminação e reaparecimento.
+// O visual humano usa os mesmos personagens e animações do multiplayer (characters/); enquanto os
+// modelos carregam — ou se falharem — os bots usam o modelo procedural antigo como substituto.
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { clamp, damp, wrapAngle, createRng, randRange, easeOutCubic, invLerp, mergeGeometries } from './utils.js';
+import { rayVsPlayer, playerHitboxes, createHitboxSet } from './shared/hitboxes.js';
+import { OPERATORS } from './shared/catalog.js';
+import { TEAM } from './shared/protocol.js';
+import { HumanCharacter } from './characters/human.js';
 
+const HUMAN_HEIGHT = 1.8;
+
+const IDLE_STATE = { vx: 0, vz: 0, aimYaw: 0, aimPitch: 0, crouch: 0 };
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
@@ -164,6 +173,23 @@ class Enemy {
     this.visorMat.emissiveIntensity = 1.2;
     this.root.visible = this.state !== 'dead';
     if (this.state === 'spawning') this.body.scale.y = 0.01;
+    this.corpseT = 0;
+    this.aimPitch = 0;
+    if (this.human) {
+      this.human.revive();
+      this.human.root.position.copy(this.position);
+      this.human.bodyYaw = this.yaw + Math.PI;
+      this.human.setVisible(this.state !== 'dead');
+    }
+  }
+
+  /** Troca o visual pelo soldado humano (chamado quando os modelos terminam de carregar). */
+  attachHuman(human) {
+    this.human = human;
+    this.body.visible = false;
+    human.root.position.copy(this.position);
+    human.bodyYaw = this.yaw + Math.PI;
+    human.setVisible(this.root.visible);
   }
 
   get active() { return this.state === 'active'; }
@@ -181,9 +207,11 @@ class Enemy {
       const rel = wrapAngle(Math.atan2(fromPos.x - this.position.x, fromPos.z - this.position.z) - this.yaw);
       this.hitSide = Math.sign(rel) || 1;
     }
+    if (this.human) this.human.hit(this.hitSide);
     if (this.health <= 0) {
       this.state = 'dying';
       this.stateTime = 0;
+      if (this.human) { this.human.setAlert(false); this.human.die(this.hitSide * 0.6); }
       this.manager.releaseAggressor(this);
       this.combat = 'idle';
       return true;
@@ -195,6 +223,12 @@ class Enemy {
     const cfg = CONFIG.enemies;
     this.stateTime += dt;
     if (this.state === 'dead') {
+      if (this.human && this.corpseT > 0) {
+        // o corpo permanece um instante no chão antes de sumir
+        this.corpseT -= dt;
+        this.human.update(dt, IDLE_STATE);
+        if (this.corpseT <= 0) { this.human.setVisible(false); this.manager.effects.spawnIn(this.position); }
+      }
       if (this.respawnTimer > 0) {
         this.respawnTimer -= dt;
         if (this.respawnTimer <= 0) this.beginSpawn();
@@ -203,6 +237,7 @@ class Enemy {
     }
     if (this.state === 'spawning') {
       const t = clamp(this.stateTime / cfg.spawnInTime, 0, 1);
+      if (this.human) this.animateHuman(dt, ctx, false);
       this.body.scale.y = Math.max(0.01, easeOutCubic(t));
       this.armor.emissive.setRGB(1.0 * (1 - t), 0.25 * (1 - t), 0.2 * (1 - t));
       if (t >= 1) { this.state = 'active'; this.stateTime = 0; this.armor.emissive.setRGB(0, 0, 0); }
@@ -232,9 +267,13 @@ class Enemy {
         moving = true;
       }
       const s = this.railT * this.railT * (3 - 2 * this.railT);
+      const px = this.position.x, pz = this.position.z;
       this.position.lerpVectors(this.spawn, this.railEnd, s);
       this.root.position.copy(this.position);
+      if (!this.vel) this.vel = new THREE.Vector3();
+      if (dt > 0) this.vel.set((this.position.x - px) / dt, 0, (this.position.z - pz) / dt);
     }
+    if (!moving && this.vel) this.vel.set(0, 0, 0);
 
     // orientação
     const toPlayer = Math.atan2(ctx.playerPosition.x - this.position.x, ctx.playerPosition.z - this.position.z);
@@ -271,6 +310,35 @@ class Enemy {
     this.visorMat.emissiveIntensity = tele;
 
     this.root.updateMatrixWorld(true);
+    if (this.human) {
+      this.animateHuman(dt, ctx, true);
+    }
+  }
+
+  /** Pose do soldado: anda no trilho, gira para o jogador, levanta a arma em alerta, mira. */
+  animateHuman(dt, ctx, active) {
+    const h = this.human;
+    const engaged = active && (this.alerted || this.combat !== 'idle');
+    let pitch = -0.05;
+    if (engaged) {
+      const dx = ctx.playerChest.x - this.position.x, dz = ctx.playerChest.z - this.position.z;
+      pitch = Math.atan2(ctx.playerChest.y - (this.position.y + 1.5), Math.hypot(dx, dz));
+    }
+    this.aimPitch = damp(this.aimPitch, pitch, 8, dt);
+    h.root.position.copy(this.position);
+    h.setShadow(this.distanceToPlayer < 25);
+    // nível de detalhe: longe e fora de combate, a pose é recalculada a 20 Hz (o acerto usa as
+    // hitboxes da simulação, não o esqueleto — nada muda na jogabilidade)
+    this.animAcc = (this.animAcc || 0) + dt;
+    if (!engaged && this.distanceToPlayer > 30 && this.animAcc < 1 / 20) return;
+    dt = Math.min(this.animAcc, 0.1);
+    this.animAcc = 0;
+    h.update(dt, {
+      vx: this.vel ? this.vel.x : 0, vz: this.vel ? this.vel.z : 0,
+      aimYaw: this.yaw + Math.PI, aimPitch: this.aimPitch, crouch: 0,
+      lowReady: engaged ? 0 : 0.85,
+    });
+    h.setAlert(this.combat === 'telegraph', this.combatT);
   }
 
   canSeePlayer(ctx, toPlayer) {
@@ -328,7 +396,8 @@ class Enemy {
   fireAtPlayer(ctx) {
     const cfg = CONFIG.enemies;
     const acc = cfg.accuracy;
-    const muzzle = this.muzzle.getWorldPosition(_muzzle);
+    const muzzle = this.human ? this.human.getMuzzleWorld(_muzzle) : this.muzzle.getWorldPosition(_muzzle);
+    if (this.human) this.human.fire();
     let p = acc.base * (1 - invLerp(acc.nearDistance, acc.farDistance, this.distanceToPlayer) * 0.7);
     const ms = ctx.playerMovement;
     if (ms.state === 'air') p *= acc.airMultiplier;
@@ -361,13 +430,33 @@ class Enemy {
     }
   }
 
-  getEyePosition(out) { return out.set(this.position.x, this.position.y + 1.88, this.position.z); }
+  getEyePosition(out) { return out.set(this.position.x, this.position.y + (this.human ? 1.66 : 1.88), this.position.z); }
 
   getCenter(out) { return out.set(this.position.x, this.position.y + 1.2, this.position.z); }
+
+  /** Centro da cabeça (alvo de tiro na cabeça). */
+  /** Centro da hitbox da cabeça (o mesmo volume usado pelos disparos). */
+  getHeadPosition(out) {
+    if (!this.human) return out.set(this.position.x, this.position.y + 2.0, this.position.z);
+    const box = playerHitboxes(this.position.x, this.position.y, this.position.z, HUMAN_HEIGHT, this._boxes || (this._boxes = createHitboxSet()),
+      { yaw: this.yaw + Math.PI, pitch: this.aimPitch || 0, vx: this.vel ? this.vel.x : 0, vz: this.vel ? this.vel.z : 0 })[0];
+    return out.set((box.min.x + box.max.x) / 2, (box.min.y + box.max.y) / 2, (box.min.z + box.max.z) / 2);
+  }
 
   updateDeath(dt) {
     const cfg = CONFIG.enemies;
     const t = clamp(this.stateTime / cfg.deathTime, 0, 1);
+    if (this.human) {
+      this.human.update(dt, IDLE_STATE);
+      if (t >= 1) {
+        this.state = 'dead';
+        this.stateTime = 0;
+        this.root.visible = false;
+        this.corpseT = 1.5;
+        this.respawnTimer = CONFIG.enemies.respawn ? CONFIG.enemies.respawnDelay : 0;
+      }
+      return;
+    }
     const fall = easeOutCubic(clamp(t / 0.6, 0, 1));
     this.body.rotation.x = -1.35 * fall;
     this.body.rotation.z = 0.25 * fall * this.hitSide;
@@ -391,6 +480,7 @@ class Enemy {
   beginSpawn() {
     this.reset(0);
     this.root.visible = true;
+    if (this.human) this.human.setVisible(true);
     this.manager.effects.spawnIn(this.position);
     this.manager.audio.play('spawnIn', { at: this.position });
   }
@@ -452,8 +542,25 @@ export class EnemyManager {
     this.aggressors.clear();
     this.enemies.forEach((e) => e.reset(0));
     // todos surgem já ativos no início da sessão
-    this.enemies.forEach((e) => { e.state = 'active'; e.body.scale.y = 1; e.root.visible = true; e.root.updateMatrixWorld(true); });
+    this.enemies.forEach((e) => {
+      e.state = 'active'; e.body.scale.y = 1; e.root.visible = true; e.root.updateMatrixWorld(true);
+      if (e.human) e.human.setVisible(true);
+    });
   }
+
+  /** Substitui os robôs por soldados humanos (operadores do catálogo, uniforme da equipe hostil). */
+  useHumans(weaponMaterials) {
+    if (this.humans) return;
+    this.humans = true;
+    this.enemies.forEach((e, i) => {
+      const op = OPERATORS[i % OPERATORS.length].id;
+      const human = new HumanCharacter({ operator: op, team: TEAM.OMEGA, weaponMaterials, weapon: i % 3 === 2 ? 'smg' : 'rifle' });
+      this.group.add(human.root);
+      e.attachHuman(human);
+    });
+  }
+
+  setVisible(v) { this.group.visible = v; }
 
   claimAggressor(enemy) {
     if (this.aggressors.has(enemy)) return true;
@@ -472,6 +579,22 @@ export class EnemyManager {
 
   /** Raio contra as hitboxes dos bots ativos. Retorna o acerto mais próximo. */
   raycast(origin, dir, maxDist) {
+    if (this.humans) {
+      // mesmas hitboxes (cabeça/corpo/pernas) dos jogadores online — shared/hitboxes.js
+      let best = null, bestT = maxDist;
+      for (const e of this.enemies) {
+        if (!e.active) continue;
+        const p = e.position;
+        const pose = this._pose || (this._pose = { yaw: 0, pitch: 0, vx: 0, vz: 0 });
+        pose.yaw = e.yaw + Math.PI; pose.pitch = e.aimPitch || 0;          // o soldado olha para yaw + π
+        pose.vx = e.vel ? e.vel.x : 0; pose.vz = e.vel ? e.vel.z : 0;
+        const h = rayVsPlayer(origin, dir, bestT, p.x, p.y, p.z, HUMAN_HEIGHT, pose);
+        if (h && h.t < bestT) { bestT = h.t; best = { enemy: e, zone: h.zone }; }
+      }
+      if (!best) return null;
+      const point = origin.clone().addScaledVector(dir, bestT);
+      return { ...best, distance: bestT, point, normal: dir.clone().negate() };
+    }
     const list = this._activeHitboxes;
     list.length = 0;
     for (const e of this.enemies) if (e.active) for (const h of e.hitboxes) list.push(h);
@@ -503,7 +626,7 @@ export class EnemyManager {
 
   dispose() {
     this.scene.remove(this.group);
-    for (const e of this.enemies) { e.armor.dispose(); e.visorMat.dispose(); }
+    for (const e of this.enemies) { e.armor.dispose(); e.visorMat.dispose(); e.human?.dispose(); }
     Object.values(this.shared.geo).forEach((g) => g.dispose());
     this.shared.merged.forEach((g) => g.dispose());
     Object.values(this.shared.mat).forEach((m) => m.dispose());

@@ -43,8 +43,10 @@ export async function listPublicRooms() {
       code: r.roomId,
       name: r.metadata.name,
       mode: r.metadata.mode,
+      map: r.metadata.map || 'foundry7',
       phase: r.metadata.phase,
       players: r.clients,
+      bots: r.metadata.bots || 0,
       maxPlayers: r.maxClients,
       joinable: !r.locked && r.clients < r.maxClients,
     }));
@@ -57,5 +59,5 @@ export async function describeRoomCode(code) {
   if (!room) return { status: 'not_found' };
   if (room.clients >= room.maxClients) return { status: 'full', mode: room.metadata?.mode };
   if (room.locked) return { status: 'in_progress', mode: room.metadata?.mode };
-  return { status: 'ok', mode: room.metadata?.mode, players: room.clients, maxPlayers: room.maxClients };
+  return { status: 'ok', mode: room.metadata?.mode, map: room.metadata?.map, players: room.clients, maxPlayers: room.maxClients };
 }

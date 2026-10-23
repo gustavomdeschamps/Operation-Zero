@@ -1,10 +1,18 @@
-// Jogadores remotos: modelo humanoide procedural (geometria/materiais compartilhados),
-// interpolação de snapshots no tempo do servidor, animação de passos/agachamento/mira,
-// disparo, dano, eliminação e placas de nome sem revelar ninguém através de paredes.
+// Jogadores remotos: soldado humano animado (operador escolhido pelo jogador, uniforme da equipe),
+// interpolação de snapshots no tempo do servidor, locomoção por captura de movimento, mira, disparo,
+// recarga, troca de arma, dano e eliminação; placas de nome sem revelar ninguém através de paredes.
+// Enquanto os modelos humanos carregam (ou se falharem), um boneco procedural simples os substitui.
 import * as THREE from 'three';
 import { TEAM, TEAM_COLORS } from '../shared/protocol.js';
 import { MOVE_STATES } from '../shared/movement.js';
+import { GAME } from '../shared/game-config.js';
 import { lerp, damp, wrapAngle, clamp, createCanvas } from '../utils.js';
+import { characterLibrary } from '../characters/library.js';
+import { HumanCharacter } from '../characters/human.js';
+import { createWeaponMaterials } from '../weapon-models.js';
+import { decodeEquipped } from '../shared/skins.js';
+
+const RELOAD_TIME = Object.fromEntries(GAME.weapons.map((w) => [w.id, w.reloadTime]));
 
 const BUFFER_SIZE = 40;
 const TEAM_ARMOR = { [TEAM.ALFA]: 0x3c6f7d, [TEAM.OMEGA]: 0x7d3324, [TEAM.NONE]: 0x5a5f66 };
@@ -46,11 +54,16 @@ function makeNameTexture(name, color) {
 }
 
 class Avatar {
-  constructor(manager, sid, team, name) {
+  constructor(manager, sid, team, name, operator = 'gaviao') {
     this.manager = manager;
     this.sid = sid;
     this.team = team;
     this.name = name;
+    this.operator = operator;
+    this.weaponId = 'rifle';
+    this.reloading = false;
+    this.vel = new THREE.Vector3();
+    this.human = null;
     this.buffer = [];
     this.root = new THREE.Group();
     this.root.name = `avatar-${sid}`;
@@ -60,6 +73,39 @@ class Avatar {
     this.walkPhase = 0; this.speed = 0; this.deathT = 0; this.flashT = 0; this.hitT = 0; this.kick = 0;
     this.connected = true;
     this.build();
+    this.tryHuman();
+  }
+
+  /** Troca o boneco provisório pelo operador humano assim que o modelo estiver disponível. */
+  tryHuman() {
+    if (this.human || !characterLibrary.isReady(this.operator)) return false;
+    try {
+      this.human = new HumanCharacter({ operator: this.operator, team: this.team, weaponMaterials: this.manager.weaponMaterials, weapon: this.weaponId });
+    } catch (err) {
+      console.warn('[avatar] falha ao criar operador', err);
+      return false;
+    }
+    this.human.bodyYaw = this.yaw;
+    if (this.skinMap) this.human.setSkins(this.skinMap);
+    this.root.add(this.human.root);
+    this.body.visible = false;
+    if (!this.alive) this.human.die(0);
+    return true;
+  }
+
+  setOperator(op) {
+    if (op === this.operator) return;
+    this.operator = op;
+    if (this.human) { this.human.dispose(); this.human = null; this.body.visible = true; }
+    characterLibrary.loadOperator(op).catch(() => {});
+    this.tryHuman();
+  }
+
+  /** Arma em mãos e recarga, conforme o estado oficial do jogador. */
+  setWeaponState(weaponId, reloading) {
+    if (weaponId !== this.weaponId) { this.weaponId = weaponId; this.human?.setWeapon(weaponId); }
+    if (reloading && !this.reloading) this.human?.startReload(RELOAD_TIME[weaponId]);
+    this.reloading = reloading;
   }
 
   build() {
@@ -136,6 +182,7 @@ class Avatar {
   setTeam(team) {
     if (team === this.team) return;
     this.team = team;
+    this.human?.setTeam(team);
     this.armor.color.setHex(TEAM_ARMOR[team]);
     this.glow.emissive.setHex(TEAM_GLOW[team]);
     this.setName(this.name, true);
@@ -178,16 +225,34 @@ class Avatar {
     this.pitch = lerp(a.pitch, c.pitch, k);
     this.h = lerp(a.h, c.h, k);
     this.move = k < 0.5 ? a.move : c.move;
+    if (span > 0 && c !== a) this.vel.set((c.x - a.x) / (span / 1000), 0, (c.z - a.z) / (span / 1000));
+    else this.vel.set(0, 0, 0);
     return true;
   }
 
-  fire() { this.flashT = 0.05; this.kick = 1; }
+  /** Postura para as hitboxes (mesma convenção do servidor — shared/hitboxes.js). */
+  pose() {
+    const p = this._pose || (this._pose = { yaw: 0, pitch: 0, vx: 0, vz: 0 });
+    p.yaw = this.yaw; p.pitch = this.pitch; p.vx = this.vel.x; p.vz = this.vel.z;
+    return p;
+  }
 
-  hit() { this.hitT = 0.15; }
+  /** Acabamentos replicados ("rifle=carbono;…"), aplicados ao modelo humano. */
+  setSkins(str) {
+    if (str === this.skinsStr) return;
+    this.skinsStr = str;
+    this.skinMap = decodeEquipped(str);
+    this.human?.setSkins(this.skinMap);
+  }
+
+  fire() { this.flashT = 0.05; this.kick = 1; this.human?.fire(); }
+
+  hit() { this.hitT = 0.15; this.human?.hit((Math.random() - 0.5) * 2); }
 
   update(dt, renderT) {
     if (!this.sample(renderT)) { this.root.visible = false; return; }
     this.root.visible = this.connected && (this.alive || this.deathT < 2.4);
+    if (this.human) { this.updateHuman(dt); return; }
     this.root.position.copy(this.pos);
     this.root.rotation.y = this.yaw;
     const moved = Math.hypot(this.pos.x - this.prevPos.x, this.pos.z - this.prevPos.z);
@@ -226,9 +291,30 @@ class Avatar {
     }
   }
 
-  getMuzzleWorld(out) { this.root.updateMatrixWorld(true); return this.muzzle.getWorldPosition(out); }
+  /** Operador humano: posição interpolada, velocidade dos snapshots, mira e estados oficiais. */
+  updateHuman(dt) {
+    const h = this.human;
+    this.root.position.copy(this.pos);
+    this.root.rotation.set(0, 0, 0);
+    if (!this.alive) {
+      if (!h.dead) h.die((Math.random() - 0.5) * 1.2);
+      this.deathT += dt;
+    } else {
+      if (h.dead) h.revive();
+      this.deathT = 0;
+    }
+    const crouch = clamp((1.8 - this.h) / 0.58, 0, 1);
+    h.update(dt, { vx: this.vel.x, vz: this.vel.z, aimYaw: this.yaw, aimPitch: this.pitch, crouch, air: MOVE_STATES[this.move] === 'air' });
+  }
+
+  getMuzzleWorld(out) {
+    if (this.human) return this.human.getMuzzleWorld(out);
+    this.root.updateMatrixWorld(true);
+    return this.muzzle.getWorldPosition(out);
+  }
 
   dispose() {
+    this.human?.dispose();
     this.armor.dispose(); this.glow.dispose(); this.nameTex.dispose(); this.label.material.dispose();
   }
 }
@@ -240,14 +326,15 @@ export class AvatarManager {
     this.group.name = 'remote-players';
     scene.add(this.group);
     this.shared = createShared();
+    this.weaponMaterials = createWeaponMaterials();
     this.avatars = new Map();
     this.labelTimer = 0;
   }
 
-  ensure(sid, team, name) {
+  ensure(sid, team, name, operator) {
     let a = this.avatars.get(sid);
     if (!a) {
-      a = new Avatar(this, sid, team, name);
+      a = new Avatar(this, sid, team, name, operator);
       this.avatars.set(sid, a);
       this.group.add(a.root);
     }
@@ -269,7 +356,11 @@ export class AvatarManager {
    * fumaça no caminho): aliados sempre, inimigos apenas sob a mira.
    */
   update(dt, renderT, ctx) {
-    for (const a of this.avatars.values()) a.update(dt, renderT);
+    for (const a of this.avatars.values()) {
+      if (!a.human) a.tryHuman();
+      a.update(dt, renderT);
+      if (a.human) a.human.setShadow(a.pos.distanceToSquared(ctx.eye) < 25 * 25);
+    }
     this.labelTimer -= dt;
     if (this.labelTimer > 0) return;
     this.labelTimer = 0.1;
@@ -300,5 +391,6 @@ export class AvatarManager {
     this.scene.remove(this.group);
     Object.values(this.shared.geo).forEach((g) => g.dispose());
     ['suit', 'dark', 'gun', 'flash'].forEach((k) => this.shared[k].dispose());
+    Object.values(this.weaponMaterials).forEach((m) => m.dispose());
   }
 }

@@ -42,5 +42,7 @@ export const SERVER_CONFIG = Object.freeze({
   minPlayersToStart: Math.max(1, int(env.MIN_PLAYERS_TO_START, GAME.match.minPlayersToStart)),
   reconnectSeconds: int(env.RECONNECT_SECONDS, GAME.net.reconnectSeconds),
   trustProxy: bool(env.TRUST_PROXY, false),
+  /** Pasta dos dados da economia (contas, inventários, transações). Use um disco persistente em produção. */
+  dataDir: env.DATA_DIR ? path.resolve(env.DATA_DIR) : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../data'),
   logLevel: env.LOG_LEVEL || (nodeEnv === 'production' ? 'info' : 'debug'),
 });

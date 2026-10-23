@@ -1,13 +1,15 @@
-// Representação de colisão da arena FOUNDRY-7 — usada pela física do cliente, pela predição
-// online e pela validação autoritativa do servidor. Gerada a partir de arena-layout.js.
-import { buildArenaLayout, BOUNDS } from './arena-layout.js';
+// Representação de colisão de cada mapa — usada pela física do cliente, pela predição online e
+// pela validação autoritativa do servidor. Gerada a partir do layout compartilhado (arena-layout.js).
+import { buildArenaLayout, getMapDef } from './arena-layout.js';
+import { DEFAULT_MAP } from './catalog.js';
 import { rayAABB, boxesOverlap, clamp } from './math.js';
 
 const SURFACE_OF = {
   concrete: 'concrete', concreteDark: 'concrete', concreteLight: 'concrete', floor: 'concrete',
   metal: 'metal', metalTrim: 'metal', steelBlue: 'metal', containerTeal: 'metal', containerOrange: 'metal',
   containerBlue: 'metal', containerRust: 'metal', containerGray: 'metal', crate: 'wood', hazard: 'metal',
-  rubber: 'concrete',
+  rubber: 'concrete', asphalt: 'concrete', woodDeck: 'wood', containerGreen: 'metal', containerYellow: 'metal',
+  glassDark: 'metal',
 };
 
 export const surfaceOf = (material) => SURFACE_OF[material] || 'concrete';
@@ -21,7 +23,7 @@ class CollisionBuilder {
   solid(x0, x1, y0, y1, z0, z1, surface = 'metal') { this.colliders.push(makeCollider(x0, x1, y0, y1, z0, z1, surface)); }
   crate(x0, x1, y0, y1, z0, z1) { this.colliders.push(makeCollider(x0, x1, y0, y1, z0, z1, 'wood')); }
 }
-for (const visual of ['paint', 'lightBar', 'pipe', 'barrel', 'cylinder', 'torus', 'floorRing', 'sign', 'floorLetter', 'wallLetter', 'ammoStationVisual', 'siteMarker']) {
+for (const visual of ['paint', 'lightBar', 'pipe', 'barrel', 'cylinder', 'torus', 'floorRing', 'sign', 'floorLetter', 'wallLetter', 'ammoStationVisual', 'siteMarker', 'water', 'crane', 'deco']) {
   CollisionBuilder.prototype[visual] = () => {};
 }
 
@@ -30,7 +32,8 @@ function makeCollider(x0, x1, y0, y1, z0, z1, surface) {
 }
 
 export class ArenaCollision {
-  constructor(colliders, bounds = BOUNDS) {
+  constructor(colliders, bounds, mapId = DEFAULT_MAP) {
+    this.mapId = mapId;
     this.colliders = colliders;
     this.bounds = bounds;
     this._n = { x: 0, y: 0, z: 0 };
@@ -103,13 +106,16 @@ export class ArenaCollision {
   }
 }
 
-let shared = null;
-/** Instância única (o layout é estático). */
-export function getArenaCollision() {
-  if (!shared) {
+const cache = new Map();
+/** Uma instância por mapa (os layouts são estáticos). */
+export function getArenaCollision(mapId = DEFAULT_MAP) {
+  const def = getMapDef(mapId);
+  let arena = cache.get(def.id);
+  if (!arena) {
     const builder = new CollisionBuilder();
-    buildArenaLayout(builder);
-    shared = new ArenaCollision(builder.colliders, BOUNDS);
+    buildArenaLayout(builder, def.id);
+    arena = new ArenaCollision(builder.colliders, def.bounds, def.id);
+    cache.set(def.id, arena);
   }
-  return shared;
+  return arena;
 }

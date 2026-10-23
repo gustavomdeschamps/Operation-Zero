@@ -1,9 +1,13 @@
 // Sistema de armas: modelos em primeira pessoa, disparo hitscan, munição,
 // recarga, cadência, dispersão por estado, recuo e animações.
+// O kit (arma primária + pistola) vem do perfil/servidor; os modelos são os mesmos do arsenal e dos
+// personagens em terceira pessoa (weapon-models.js), com mãos apenas na primeira pessoa.
 import * as THREE from 'three';
 import { CONFIG, DEG2RAD } from './config.js';
 import { clamp, damp, lerp, createRng, createCanvas, smoothstep, disposeObject3D } from './utils.js';
-import { computeSpread, recoilKick } from './shared/weapon-rules.js';
+import { computeSpread, recoilKick, loadoutFor } from './shared/weapon-rules.js';
+import { buildWeaponModel } from './weapon-models.js';
+import { getSkinMaterials } from './skins-render.js';
 
 const _origin = new THREE.Vector3();
 const _dir = new THREE.Vector3();
@@ -12,6 +16,62 @@ const _up = new THREE.Vector3();
 const _tmp = new THREE.Vector3();
 const _end = new THREE.Vector3();
 const _muzzleWorld = new THREE.Vector3();
+const _eject = new THREE.Vector3();
+
+/** Pontos de ejeção das cápsulas no espaço da arma (janela do ferrolho / topo do ferrolho). */
+const EJECT_PORT = { rifle: [0.03, 0.045, -0.06], smg: [0.026, 0.04, -0.03], pistol: [0.018, 0.05, -0.02], sniper: [0.036, 0.04, 0.06] };
+const SHOT_SOUND = { rifle: 'rifleShot', smg: 'smgShot', pistol: 'pistolShot', sniper: 'sniperShot' };
+const FLASH_SIZE = { rifle: 0.17, smg: 0.12, pistol: 0.13, sniper: 0.26 };
+// recuo visual da arma em 1ª pessoa: [recuo para trás, inclinação]
+const KICK = { rifle: [0.035, 0.045], smg: [0.026, 0.03], pistol: [0.05, 0.11], sniper: [0.085, 0.2] };
+
+/**
+ * Cápsulas ejetadas na arma em 1ª pessoa: conjunto fixo reaproveitado (sem criar geometria por
+ * disparo), física simples no espaço da câmera da arma. Puramente visual.
+ */
+class CasingPool {
+  constructor(scene, count = 12) {
+    this.geometry = new THREE.CylinderGeometry(0.0042, 0.0042, 0.02, 6);
+    this.geometry.rotateZ(Math.PI / 2);
+    this.material = new THREE.MeshStandardMaterial({ color: 0xc9a050, metalness: 0.85, roughness: 0.35 });
+    this.items = [];
+    for (let i = 0; i < count; i++) {
+      const mesh = new THREE.Mesh(this.geometry, this.material);
+      mesh.visible = false;
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+      this.items.push({ mesh, vel: new THREE.Vector3(), spin: new THREE.Vector3(), life: 0 });
+    }
+    this.cursor = 0;
+  }
+
+  spawn(pos, rng, scale = 1) {
+    const c = this.items[this.cursor];
+    this.cursor = (this.cursor + 1) % this.items.length;
+    c.mesh.position.copy(pos);
+    c.mesh.rotation.set(rng() * 3, rng() * 3, rng() * 3);
+    c.mesh.scale.setScalar(scale);
+    c.vel.set(1.1 + rng() * 0.5, 0.9 + rng() * 0.45, 0.15 + rng() * 0.2);
+    c.spin.set(18 + rng() * 10, rng() * 8, 12 + rng() * 8);
+    c.life = 0.6;
+    c.mesh.visible = true;
+  }
+
+  update(dt) {
+    for (const c of this.items) {
+      if (c.life <= 0) continue;
+      c.life -= dt;
+      c.vel.y -= 9.8 * dt;
+      c.mesh.position.addScaledVector(c.vel, dt);
+      c.mesh.rotation.x += c.spin.x * dt; c.mesh.rotation.y += c.spin.y * dt; c.mesh.rotation.z += c.spin.z * dt;
+      if (c.life <= 0) c.mesh.visible = false;
+    }
+  }
+
+  clear() { for (const c of this.items) { c.life = 0; c.mesh.visible = false; } }
+
+  dispose() { this.geometry.dispose(); this.material.dispose(); }
+}
 
 function makeFlashTexture() {
   const c = createCanvas(128);
@@ -32,121 +92,6 @@ function makeFlashTexture() {
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
-}
-
-/** Materiais compartilhados entre os modelos em primeira pessoa. */
-function createViewmodelMaterials() {
-  return {
-    gunmetal: new THREE.MeshStandardMaterial({ color: 0x4a515b, roughness: 0.36, metalness: 0.7 }),
-    polymer: new THREE.MeshStandardMaterial({ color: 0x2a2e34, roughness: 0.62, metalness: 0.15 }),
-    cerakote: new THREE.MeshStandardMaterial({ color: 0x8b8170, roughness: 0.6, metalness: 0.2 }),
-    accent: new THREE.MeshStandardMaterial({ color: 0x0d3236, emissive: 0x3ef0ff, emissiveIntensity: 1.6, roughness: 0.3 }),
-    glove: new THREE.MeshStandardMaterial({ color: 0x5a5148, roughness: 0.8, metalness: 0.05 }),
-    sleeve: new THREE.MeshStandardMaterial({ color: 0x4d5a6b, roughness: 0.88, metalness: 0 }),
-    knuckle: new THREE.MeshStandardMaterial({ color: 0x2f3338, roughness: 0.6, metalness: 0.3 }),
-    lens: new THREE.MeshStandardMaterial({ color: 0x0b2a2e, roughness: 0.05, metalness: 0.6, transparent: true, opacity: 0.28, depthWrite: false }),
-    reticle: new THREE.MeshBasicMaterial({ color: 0xff3a3a }),
-  };
-}
-
-function part(parent, geo, mat, pos, rot = null) {
-  const m = new THREE.Mesh(geo, mat);
-  m.position.set(pos[0], pos[1], pos[2]);
-  if (rot) m.rotation.set(rot[0], rot[1], rot[2]);
-  parent.add(m);
-  return m;
-}
-
-const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
-const cyl = (r1, r2, h, s = 12) => { const g = new THREE.CylinderGeometry(r1, r2, h, s); g.rotateX(Math.PI / 2); return g; };
-
-function addArm(parent, M, handPos, sleeveDir, handRot) {
-  const hand = new THREE.Group();
-  hand.position.set(...handPos);
-  hand.rotation.set(...handRot);
-  part(hand, box(0.075, 0.085, 0.1), M.glove, [0, 0, 0]);
-  part(hand, box(0.08, 0.03, 0.04), M.knuckle, [0, 0.03, -0.035]);
-  // antebraço (manga) saindo da tela
-  const dir = new THREE.Vector3(...sleeveDir).normalize();
-  const sleeve = new THREE.Mesh(box(0.095, 0.1, 0.42), M.sleeve);
-  sleeve.position.copy(dir).multiplyScalar(0.23);
-  sleeve.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
-  hand.add(sleeve);
-  part(hand, box(0.1, 0.105, 0.05), M.polymer, [sleeveDir[0] * 0.06, sleeveDir[1] * 0.06, sleeveDir[2] * 0.06 + 0.02]);
-  parent.add(hand);
-  return hand;
-}
-
-function buildRifle(M) {
-  const root = new THREE.Group();
-  const gun = new THREE.Group();
-  root.add(gun);
-  part(gun, box(0.066, 0.1, 0.36), M.gunmetal, [0, 0, 0]);                 // receptor
-  part(gun, box(0.07, 0.03, 0.34), M.polymer, [0, -0.06, 0.0]);            // receptor inferior
-  part(gun, box(0.034, 0.022, 0.42), M.gunmetal, [0, 0.062, -0.08]);       // trilho
-  for (let i = 0; i < 9; i++) part(gun, box(0.04, 0.008, 0.012), M.polymer, [0, 0.076, -0.26 + i * 0.045]);
-  part(gun, box(0.074, 0.088, 0.3), M.cerakote, [0, 0.0, -0.33]);          // guarda-mão
-  for (let i = 0; i < 4; i++) {
-    part(gun, box(0.076, 0.014, 0.05), M.polymer, [0, -0.015, -0.24 - i * 0.065]);
-  }
-  part(gun, box(0.004, 0.012, 0.22), M.accent, [0.0385, 0.02, -0.32]);     // faixa ciano
-  part(gun, box(0.004, 0.012, 0.22), M.accent, [-0.0385, 0.02, -0.32]);
-  part(gun, cyl(0.013, 0.013, 0.22), M.gunmetal, [0, 0.012, -0.58]);       // cano
-  part(gun, cyl(0.021, 0.021, 0.07), M.polymer, [0, 0.012, -0.69]);        // freio de boca
-  part(gun, box(0.05, 0.12, 0.06), M.polymer, [0, -0.115, 0.085], [-0.32, 0, 0]); // empunhadura
-  part(gun, box(0.05, 0.075, 0.2), M.polymer, [0, -0.01, 0.29]);           // coronha
-  part(gun, box(0.054, 0.12, 0.03), M.gunmetal, [0, -0.03, 0.4]);
-  part(gun, box(0.02, 0.03, 0.06), M.gunmetal, [0.04, 0.03, 0.08]);        // alavanca de manejo
-  part(gun, box(0.044, 0.07, 0.035), M.polymer, [0, -0.07, -0.12]);        // guarda-mato
-  // mira holográfica
-  const sight = new THREE.Group();
-  sight.position.set(0, 0.105, -0.04);
-  part(sight, box(0.05, 0.012, 0.08), M.gunmetal, [0, -0.026, 0]);
-  part(sight, box(0.006, 0.05, 0.075), M.gunmetal, [0.024, 0, 0]);
-  part(sight, box(0.006, 0.05, 0.075), M.gunmetal, [-0.024, 0, 0]);
-  part(sight, box(0.05, 0.006, 0.075), M.gunmetal, [0, 0.025, 0]);
-  part(sight, new THREE.PlaneGeometry(0.042, 0.044), M.lens, [0, 0, -0.03]);
-  part(sight, new THREE.CircleGeometry(0.0016, 10), M.reticle, [0, 0.0, -0.031]);
-  part(sight, new THREE.RingGeometry(0.0085, 0.0098, 32), M.reticle, [0, 0.0, -0.031]);
-  gun.add(sight);
-  // carregador
-  const mag = new THREE.Group();
-  mag.position.set(0, -0.08, -0.07);
-  part(mag, box(0.046, 0.19, 0.085), M.polymer, [0, -0.09, -0.01], [0.18, 0, 0]);
-  part(mag, box(0.048, 0.02, 0.09), M.gunmetal, [0, -0.18, -0.03], [0.18, 0, 0]);
-  gun.add(mag);
-  // mãos
-  addArm(gun, M, [0.012, -0.115, 0.1], [0.45, -0.55, 0.7], [-0.3, 0, 0.1]);
-  addArm(gun, M, [-0.01, -0.06, -0.36], [-0.55, -0.6, 0.6], [0, 0, -0.35]);
-  const muzzle = new THREE.Object3D();
-  muzzle.position.set(0, 0.012, -0.74);
-  gun.add(muzzle);
-  return { root, gun, mag, muzzle, magRest: mag.position.clone() };
-}
-
-function buildPistol(M) {
-  const root = new THREE.Group();
-  const gun = new THREE.Group();
-  root.add(gun);
-  const slide = part(gun, box(0.042, 0.046, 0.2), M.gunmetal, [0, 0.03, -0.04]);
-  for (let i = 0; i < 6; i++) part(gun, box(0.044, 0.03, 0.006), M.polymer, [0, 0.03, 0.03 + i * 0.01]);
-  part(gun, box(0.004, 0.008, 0.12), M.accent, [0.022, 0.035, -0.06]);
-  part(gun, box(0.04, 0.034, 0.17), M.polymer, [0, -0.01, -0.03]);
-  part(gun, cyl(0.009, 0.009, 0.03), M.gunmetal, [0, 0.03, -0.155]);
-  part(gun, box(0.008, 0.012, 0.01), M.gunmetal, [0, 0.059, -0.13]);
-  part(gun, box(0.03, 0.012, 0.012), M.gunmetal, [0, 0.059, 0.05]);
-  part(gun, box(0.038, 0.13, 0.055), M.polymer, [0, -0.08, 0.04], [-0.22, 0, 0]);
-  part(gun, box(0.034, 0.05, 0.03), M.polymer, [0, -0.04, -0.03]);
-  const mag = new THREE.Group();
-  mag.position.set(0, -0.08, 0.045);
-  part(mag, box(0.03, 0.12, 0.045), M.gunmetal, [0, -0.02, 0], [-0.22, 0, 0]);
-  gun.add(mag);
-  addArm(gun, M, [0.01, -0.09, 0.05], [0.4, -0.6, 0.7], [-0.2, 0, 0.1]);
-  addArm(gun, M, [-0.035, -0.1, 0.03], [-0.5, -0.6, 0.65], [-0.2, 0, -0.5]);
-  const muzzle = new THREE.Object3D();
-  muzzle.position.set(0, 0.03, -0.17);
-  gun.add(muzzle);
-  return { root, gun, mag, muzzle, slide, magRest: mag.position.clone() };
 }
 
 export class WeaponSystem {
@@ -170,15 +115,29 @@ export class WeaponSystem {
     this.viewScene.add(rim);
     this.viewFlashLight = new THREE.PointLight(0xffb060, 0, 2, 2);
     this.viewScene.add(this.viewFlashLight);
+    this.casings = new CasingPool(this.viewScene);
+    this.fxRng = createRng(77);              // separado: efeitos não alteram a sequência da dispersão
 
-    this.materials = createViewmodelMaterials();
     this.flashTexture = makeFlashTexture();
     this.flashMaterial = new THREE.MeshBasicMaterial({ map: this.flashTexture, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    this.models = new Map();               // id → modelo em 1ª pessoa (criado sob demanda, reaproveitado)
+    this.primaryId = null;
+    this.skins = {};                       // arma → acabamento equipado (só visual)
+    this.setLoadout('rifle');
+    this.rng = createRng(1);
+    // estratégia de resolução dos disparos (substituída pelo modo online)
+    this.shotResolver = (origin, dir, def, end) => this.resolveOffline(origin, dir, def, end);
+    this.reset();
+  }
 
-    this.weapons = CONFIG.weapons.map((def) => {
-      const model = def.id === 'rifle' ? buildRifle(this.materials) : buildPistol(this.materials);
+  /** Modelo em primeira pessoa da arma `id` (com mãos e clarão de disparo). */
+  modelFor(id, skin = this.skins[id] || '') {
+    const key = `${id}|${skin}`;
+    let model = this.models.get(key);
+    if (!model) {
+      model = buildWeaponModel(id, getSkinMaterials(skin), { hands: true });
       const flash = new THREE.Group();
-      const fGeo = new THREE.PlaneGeometry(1, 1);
+      const fGeo = this._flashGeo || (this._flashGeo = new THREE.PlaneGeometry(1, 1));
       const p1 = new THREE.Mesh(fGeo, this.flashMaterial);
       const p2 = new THREE.Mesh(fGeo, this.flashMaterial); p2.rotation.y = Math.PI / 2;
       const p3 = new THREE.Mesh(fGeo, this.flashMaterial); p3.rotation.x = Math.PI / 2;
@@ -188,12 +147,41 @@ export class WeaponSystem {
       model.flash = flash;
       model.root.visible = false;
       this.viewScene.add(model.root);
-      return { def, model, mag: def.magSize, reserve: def.reserve };
-    });
-    this.rng = createRng(1);
-    // estratégia de resolução dos disparos (substituída pelo modo online)
-    this.shotResolver = (origin, dir, def, end) => this.resolveOffline(origin, dir, def, end);
-    this.reset();
+      this.models.set(key, model);
+    }
+    return model;
+  }
+
+  /**
+   * Define o kit (arma primária + pistola). Online, o servidor confirma o kit em uso; offline vem do
+   * perfil do jogador. Reinicia munição e estado das armas quando o kit muda.
+   */
+  setLoadout(primaryId, force = false) {
+    const kit = loadoutFor(primaryId);
+    if (this.primaryId === kit[1].id && this.weapons && !force) return false;
+    this.primaryId = kit[1].id;
+    for (const m of this.models.values()) m.root.visible = false;
+    this.weapons = [kit[1], kit[2]].map((def) => ({ def, model: this.modelFor(def.id), mag: def.magSize, reserve: def.reserve }));
+    if (this.rng) this.reset();
+    return true;
+  }
+
+  /**
+   * Acabamentos equipados (arma → skin). Só troca os modelos exibidos: munição, dispersão, recuo e
+   * cadência continuam vindo exclusivamente da definição da arma.
+   */
+  setSkins(map = {}) {
+    const next = { ...map };
+    if (JSON.stringify(next) === JSON.stringify(this.skins)) return false;
+    this.skins = next;
+    if (!this.weapons) return true;
+    const visible = this.current.model.root.visible;
+    for (const w of this.weapons) {
+      const model = this.modelFor(w.def.id);
+      if (model !== w.model) { w.model.root.visible = false; w.model = model; }
+    }
+    this.current.model.root.visible = visible;
+    return true;
   }
 
   reset() {
@@ -212,11 +200,14 @@ export class WeaponSystem {
     this.switchTarget = 0;
     this.adsT = 0;
     this.flashT = 0;
+    this.casings?.clear();
     this.kickBack = 0; this.kickPitch = 0; this.kickRoll = 0;
     this.swayX = 0; this.swayY = 0;
     this.triggerLatched = false;
     this.autoReloadT = -1;
     this.equipT = 0;
+    this.boltT = -1;
+    this.scoped = false;
     this.rng.reseed(1);
     this.current.model.root.visible = true;
     this.currentSpread = this.current.def.spread.idle;
@@ -224,6 +215,9 @@ export class WeaponSystem {
   }
 
   get current() { return this.weapons[this.index]; }
+
+  /** Materiais de fábrica compartilhados (personagens em 3ª pessoa sem acabamento). */
+  get materials() { return getSkinMaterials(''); }
 
   /** Usa o mesmo mapa de ambiente do mundo para reflexos coerentes na arma. */
   setEnvironment(texture) { this.viewScene.environment = texture; }
@@ -256,7 +250,7 @@ export class WeaponSystem {
 
     // troca de arma
     for (const other of this.weapons) {
-      if (input.wasPressed(`Digit${other.def.slot}`) && other !== w && !this.switching) this.beginSwitch(this.weapons.indexOf(other));
+      if (input.pressedAction(other.def.slot === 1 ? 'primary' : 'secondary') && other !== w && !this.switching) this.beginSwitch(this.weapons.indexOf(other));
     }
     if (this.switching) this.updateSwitch(dt);
 
@@ -266,7 +260,7 @@ export class WeaponSystem {
     if (this.adsT < 0.001) this.adsT = 0;
 
     // recarga
-    if (canFire && input.wasPressed('KeyR')) this.startReload();
+    if (canFire && input.pressedAction('reload')) this.startReload();
     if (this.autoReloadT >= 0) {
       this.autoReloadT -= dt;
       if (this.autoReloadT < 0) this.startReload();
@@ -335,10 +329,12 @@ export class WeaponSystem {
     this.flashT = 0.045;
     w.model.flash.visible = true;
     w.model.flash.rotation.z = this.rng() * Math.PI;
-    const fs = def.id === 'rifle' ? 0.17 : 0.13;
-    w.model.flash.scale.setScalar(fs * (0.8 + this.rng() * 0.4));
-    this.viewFlashLight.intensity = 3;
-    this.audio.play(def.id === 'rifle' ? 'rifleShot' : 'pistolShot');
+    w.model.flash.scale.setScalar((FLASH_SIZE[def.id] || 0.15) * (0.8 + this.rng() * 0.4));
+    this.viewFlashLight.intensity = 3 * (this.flashScale ?? 1);
+    this.audio.play(SHOT_SOUND[def.id] || 'rifleShot');
+    // cápsula ejetada pela janela (no fuzil de ferrolho, só quando o ferrolho é manejado)
+    if (def.bolt) this.boltT = 0;
+    else this.ejectCasing(w, def);
 
     // recuo (padrão determinístico)
     const i = this.shotsInSequence;
@@ -350,13 +346,44 @@ export class WeaponSystem {
     this.bloom = Math.min(def.spread.maxBloom, this.bloom + def.spread.perShot);
 
     // animação da arma
-    this.kickBack = Math.min(this.kickBack + (def.id === 'rifle' ? 0.035 : 0.05), 0.09);
-    this.kickPitch = Math.min(this.kickPitch + (def.id === 'rifle' ? 0.045 : 0.11), 0.22);
+    const [kb, kp2] = KICK[def.id] || KICK.rifle;
+    this.kickBack = Math.min(this.kickBack + kb, 0.11);
+    this.kickPitch = Math.min(this.kickPitch + kp2, 0.26);
     this.kickRoll += (this.rng() - 0.5) * 0.04;
 
     this.events.emit('shotFired', { weapon: def.id, hit: !!shot.hit, result: hitResult });
     this.emitAmmo();
     if (w.mag === 0 && w.reserve > 0) this.autoReloadT = 0.3;
+  }
+
+  ejectCasing(w, def) {
+    const port = EJECT_PORT[def.id] || EJECT_PORT.rifle;
+    w.model.gun.updateMatrixWorld(true);
+    this.casings.spawn(w.model.gun.localToWorld(_eject.set(port[0], port[1], port[2])), this.fxRng, def.id === 'pistol' ? 0.8 : def.id === 'sniper' ? 1.5 : 1);
+  }
+
+  /**
+   * Ferrolho do fuzil de precisão: gira para cima, recua (ejeta a cápsula), avança e trava.
+   * Apenas visual/sonoro — a cadência real é a mesma do servidor (fireRate).
+   */
+  updateBolt(dt, w) {
+    const b = w.def.bolt;
+    if (!b || this.boltT < 0) { if (w.model.bolt) { w.model.bolt.rotation.z = 0; w.model.bolt.position.z = 0.1; } return 0; }
+    const prev = this.boltT;
+    this.boltT += dt;
+    const p = (this.boltT - b.delay) / b.duration;
+    const pp = (prev - b.delay) / b.duration;
+    if (pp < 0 && p >= 0) this.audio.play('boltOpen');
+    if (pp < 0.45 && p >= 0.45) this.ejectCasing(w, w.def);
+    if (pp < 0.7 && p >= 0.7) this.audio.play('boltClose');
+    let lift = 0, pull = 0;
+    if (p > 0 && p < 1) {
+      lift = p < 0.2 ? p / 0.2 : p > 0.8 ? (1 - p) / 0.2 : 1;
+      pull = p < 0.2 ? 0 : p < 0.45 ? (p - 0.2) / 0.25 : p < 0.7 ? 1 - (p - 0.45) / 0.25 : 0;
+    }
+    if (p >= 1) this.boltT = -1;
+    if (w.model.bolt) { w.model.bolt.rotation.z = lift * 1.1; w.model.bolt.position.z = 0.1 + pull * 0.09; }
+    return lift;
   }
 
   /**
@@ -517,14 +544,23 @@ export class WeaponSystem {
       this.flashT -= dt;
       if (this.flashT <= 0) m.flash.visible = false;
     }
+    this.casings.update(dt);
     this.viewFlashLight.position.set(x, y + 0.05, z - 0.4);
     this.viewFlashLight.intensity = Math.max(0, this.viewFlashLight.intensity - dt * 70);
 
-    // FOV de mira
+    // ferrolho (fuzil de precisão): a arma inclina levemente enquanto é manejado
+    const boltLift = this.updateBolt(dt, w);
+    if (boltLift) { m.root.rotation.z += boltLift * 0.18; m.root.position.y -= boltLift * 0.012; }
+
+    // FOV de mira; luneta: a arma some e a sobreposição da luneta aparece
     this.fovScale = lerp(1, w.def.viewmodel.adsFovScale, ads);
+    this.scoped = !!w.def.scope && this.adsT >= w.def.scope.hideViewmodelAt && !this.switching;
+    if (this.scoped) { m.root.visible = false; this._scopeHid = m; }
+    else if (this._scopeHid) { if (this._scopeHid === m) m.root.visible = true; this._scopeHid = null; }
   }
 
   dispose() {
+    this.casings.dispose();
     disposeObject3D(this.viewScene);
     this.flashTexture.dispose();
   }

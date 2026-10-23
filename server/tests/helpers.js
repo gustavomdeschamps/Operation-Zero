@@ -4,6 +4,7 @@
 import { MatchRoom } from '../src/rooms/MatchRoom.js';
 import { MatchState, PlayerState, SpikeState } from '../src/schema/MatchState.js';
 import { getArenaCollision } from '../../shared/arena-collision.js';
+import { getMapDef } from '../../shared/arena-layout.js';
 import { createMoveState } from '../../shared/movement.js';
 import { createRng } from '../../shared/math.js';
 import { GAME } from '../../shared/game-config.js';
@@ -14,10 +15,17 @@ import { MatchFlow } from '../src/systems/match-state.js';
 import { TdmMode } from '../src/modes/tdm.js';
 import { TacticalMode } from '../src/modes/tactical.js';
 import { RateLimiter, sanitizeInput } from '../src/services/validation.js';
+import { BotManager } from '../src/ai/bot-manager.js';
+import { setEconomy } from '../src/economy/index.js';
+import { Economy } from '../src/economy/economy.js';
+import { EconomyStore } from '../src/economy/store.js';
+
+// economia somente em memória nos testes (nenhum arquivo é gravado)
+setEconomy(new Economy(new EconomyStore(null)));
 
 export const DT = 1 / GAME.net.tickRate;
 
-export function createTestRoom(mode = 'tdm') {
+export function createTestRoom(mode = 'tdm', map = 'foundry7') {
   const room = Object.create(MatchRoom.prototype);
   const st = new MatchState();
   st.spike = new SpikeState();
@@ -27,8 +35,11 @@ export function createTestRoom(mode = 'tdm') {
   st.maxPlayers = 10;
   room.state = st;
   room.code = 'TEST1';
+  room.nonce = `n${Math.random().toString(36).slice(2, 8)}`;
   room.mode = mode === 'tactical' ? TacticalMode : TdmMode;
-  room.arena = getArenaCollision();
+  st.map = map;
+  room.mapDef = getMapDef(map);
+  room.arena = getArenaCollision(map);
   room.records = new Map();
   room.flow = new MatchFlow(room);
   room.rng = createRng(7);
@@ -44,7 +55,11 @@ export function createTestRoom(mode = 'tdm') {
   room.lock = () => { room.locked = true; };
   room.unlock = () => { room.locked = false; };
   room.updateListing = () => {};
-  room.seenPosition = (shooter, target) => ({ x: target.state.x, y: target.state.y, z: target.state.z, h: target.state.h });
+  room.seenPosition = (shooter, target) => {
+    const s = target.state;
+    return { x: s.x, y: s.y, z: s.z, h: s.h, pose: { yaw: s.yaw, pitch: s.pitch, vx: s.vx, vz: s.vz } };
+  };
+  room.bots = new BotManager(room);
   return room;
 }
 
@@ -58,7 +73,7 @@ export function addPlayer(room, { name = `P${nextId}`, team = null } = {}) {
   const rec = {
     sid, client, clientKey: `key-${sid}`, ip: '127.0.0.1', state: ps, move: createMoveState(),
     simTime: 0, budget: 1, lastInputAt: Date.now(), lastHeldBtn: 0, lastDamageTime: -999, regenAcc: 0,
-    protectedT: 0, interacting: false, stationCd: [0, 0],
+    protectedT: 0, interacting: false, stationCd: [0, 0], matchStats: { active: 0, botKills: 0, headshots: 0, plants: 0, defuses: 0 }, accountId: null,
     rejectLimiter: new RateLimiter(1000), msgLimiter: new RateLimiter(1000),
   };
   resetLoadout(rec);

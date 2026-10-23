@@ -3,9 +3,9 @@
 import { GAME } from '../../../shared/game-config.js';
 import { stepMovement, movementState, MOVE_STATES } from '../../../shared/movement.js';
 import { BTN } from '../../../shared/protocol.js';
-import { AMMO_STATIONS } from '../../../shared/arena-layout.js';
 import { handleWeaponInput, updateRegen } from './combat.js';
 import { tryAbility } from './abilities.js';
+import { sanitizeInput } from '../services/validation.js';
 
 const IDLE_INPUT = Object.freeze({ mf: 0, mr: 0, btn: 0, yaw: 0, pitch: 0, slot: 1, dx: 0, dy: 0, dz: -1 });
 
@@ -21,6 +21,14 @@ export function tickPlayers(room, ctx) {
   for (const rec of room.records.values()) {
     rec.budget = Math.min(maxBudget, rec.budget + 1);
     if (!rec.state.connected) continue;
+    if (rec.bot) {
+      // bot: o quadro vem da IA do servidor e passa pela mesma física, armas e validação
+      const inp = room.bots.input(rec, dt);
+      sanitizeInput(inp);
+      processInput(room, rec, inp, dt, false);
+      tickTimers(room, rec, dt);
+      continue;
+    }
     let processed = 0;
     const channel = room.inputs.get(rec.sid);
     // checa o orçamento ANTES de consumir: um quadro consumido é confirmado (ack) ao cliente,
@@ -53,6 +61,8 @@ export function processInput(room, rec, inp, dt, idle) {
   if (!idle) {
     rec.simTime += dt;
     rec.lastHeldBtn = inp.btn & (BTN.CROUCH | BTN.WALK);
+    // tempo jogando de fato (para recompensas: ficar parado/ausente não rende créditos)
+    if (rec.matchStats && s.alive && (inp.mf || inp.mr || (inp.btn & (BTN.FIRE | BTN.JUMP | BTN.INTERACT)))) rec.matchStats.active += dt;
   }
   const canMove = s.alive && room.movementAllowed(rec);
   cmd.f = canMove ? inp.mf : 0;
@@ -98,13 +108,15 @@ function tickTimers(room, rec, dt) {
   if (room.mode.regen && s.alive) updateRegen(rec, dt);
   if (!s.alive) return;
   // estações de munição (por jogador, com recarga individual)
-  for (let i = 0; i < AMMO_STATIONS.length; i++) {
+  const stations = room.mapDef.ammoStations;
+  for (let i = 0; i < stations.length; i++) {
     if (rec.stationCd[i] > 0) { rec.stationCd[i] -= dt; continue; }
-    const st = AMMO_STATIONS[i];
+    const st = stations[i];
     if (Math.hypot(st.x - rec.move.pos.x, st.z - rec.move.pos.z) > GAME.ammoStation.radius) continue;
     let refilled = false;
-    for (const w of GAME.weapons) {
-      const a = rec.ammo.get(w.slot);
+    for (const slot of [1, 2]) {
+      const w = rec.loadout[slot];
+      const a = rec.ammo.get(slot);
       if (a.reserve < w.reserve) { a.reserve = w.reserve; refilled = true; }
     }
     if (refilled) {

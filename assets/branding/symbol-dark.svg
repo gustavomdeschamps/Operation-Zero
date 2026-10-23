@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="OPERATION ZERO"><title>OPERATION ZERO</title>
+  <path d="M22 6 H42 M58 22 V42 M42 58 H22 M6 42 V22" stroke="#11161c" stroke-width="0" fill="none"/>
+  <path fill="#11161c" d="M20 4 H28 V10 H22.5 L10 22.5 V28 H4 V20 Z"/>
+  <path fill="#11161c" d="M36 4 H44 L60 20 V28 H54 V22.5 L41.5 10 H36 Z"/>
+  <path fill="#11161c" d="M60 36 V44 L44 60 H36 V54 H41.5 L54 41.5 V36 Z"/>
+  <path fill="#11161c" d="M28 60 H20 L4 44 V36 H10 V41.5 L22.5 54 H28 Z"/>
+  <path fill="#0f8f9c" d="M19 19 H45 V25 L28.5 39 H45 V45 H19 V39 L35.5 25 H19 Z"/>
+  <rect x="30.5" y="0" width="3" height="7" fill="#0f8f9c"/>
+  <rect x="30.5" y="57" width="3" height="7" fill="#0f8f9c"/>
+</svg>

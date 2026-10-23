@@ -1,4 +1,4 @@
-// Contrato de comunicação cliente ↔ servidor do OPERATION ZERO 2.0.
+// Contrato de comunicação cliente ↔ servidor do OPERATION ZERO (protocolo 3: operador, arma primária e mapa).
 //
 // Canais:
 //  1. ENTRADA (cliente → servidor): canal de input do Colyseus (`room.input()`), um quadro por
@@ -8,7 +8,7 @@
 //
 // O servidor NUNCA aceita resultados do cliente (dano, munição, acertos); só comandos.
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 4;
 export const ROOM_NAME = 'match';
 
 export const MODES = { TDM: 'tdm', TACTICAL: 'tactical' };
@@ -62,6 +62,7 @@ export const MSG = {
   NOTICE: 'notice',      // { t: tipo, n: nome, m: texto }                           (todos)
   REJECT: 'reject',      // { a: ação, r: motivo }                                   (só para o autor)
   ROUND: 'round',        // { w: equipe vencedora, r: motivo, n: rodada }            (todos)
+  REWARD: 'reward',      // { completion, win, performance, objective, total, granted, capped, balance } | { guest } (só para o jogador)
   ABILITY: 'ability',    // { id, x, y, z, s: sid }                                  (todos — efeito sonoro/visual de lançamento)
 };
 
@@ -71,6 +72,8 @@ export const CMSG = {
   START: 'start',        // anfitrião inicia a partida
   TEAM: 'team',          // { team: 1|2 } — só no lobby
   PING: 'ping_report',   // { ms } — latência medida pelo cliente (apenas exibição no placar)
+  LOADOUT: 'loadout',    // { operator, primary } — validado no servidor; aplicado no próximo surgimento
+  BOTS: 'bots',          // { op: 'add'|'remove'|'difficulty', team?, difficulty? } — anfitrião, sala privada, lobby
 };
 
 export const NOTICE_TYPES = { JOIN: 'join', LEAVE: 'leave', DROP: 'drop', RECONNECT: 'reconnect', HOST: 'host', INFO: 'info' };

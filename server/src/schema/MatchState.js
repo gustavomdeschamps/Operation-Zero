@@ -5,7 +5,11 @@ import { schema, t } from '@colyseus/schema';
 export const PlayerState = schema({
   name: t.string().default(''),
   team: t.uint8().default(0),
+  operator: t.string().default('gaviao'),   // aparência (catálogo validado no servidor)
+  primary: t.string().default('rifle'),     // arma do slot 1 em uso (rifle | smg | sniper)
+  skins: t.string().default(''),            // acabamentos equipados da conta ("rifle=carbono;…"), definidos pelo servidor
   ready: t.boolean().default(false),
+  bot: t.boolean().default(false),       // participante controlado pelo servidor (sempre exibido como BOT)
   connected: t.boolean().default(true),
   // movimento
   x: t.float32().default(0),
@@ -64,6 +68,7 @@ export const SpikeState = schema({
 
 export const MatchState = schema({
   mode: t.string().default('tdm'),
+  map: t.string().default('foundry7'),
   phase: t.string().default('lobby'),
   timeLeft: t.float32().default(0),
   roomName: t.string().default(''),
@@ -80,6 +85,7 @@ export const MatchState = schema({
   attackers: t.uint8().default(2),
   winner: t.uint8().default(0),
   endReason: t.string().default(''),
+  botDifficulty: t.string().default('normal'),
   players: t.map(PlayerState),
   smokes: t.map(SmokeState),
   spike: t.ref(SpikeState),

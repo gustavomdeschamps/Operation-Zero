@@ -6,6 +6,11 @@ import { randomUUID } from 'node:crypto';
 import { Client } from '@colyseus/sdk';
 import { matchMaker } from '@colyseus/core';
 import { startServer } from '../src/index.js';
+import { setEconomy } from '../src/economy/index.js';
+import { Economy } from '../src/economy/economy.js';
+import { EconomyStore } from '../src/economy/store.js';
+
+setEconomy(new Economy(new EconomyStore(null)));
 import { PROTOCOL_VERSION, ROOM_NAME, CMSG, MSG, BTN, PHASE, TEAM } from '../../shared/protocol.js';
 import { GAME } from '../../shared/game-config.js';
 

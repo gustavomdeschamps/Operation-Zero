@@ -1,10 +1,26 @@
-# Publicação do OPERATION ZERO 2.0 na internet
+# Publicação do OPERATION ZERO na internet
 
 O servidor de partidas é um processo Node.js **de longa duração** com **WebSockets persistentes** e um loop de simulação de 60 Hz.
 Funções *serverless* convencionais (Vercel Functions, Netlify Functions, AWS Lambda) **não servem**: elas não mantêm conexões nem processos vivos entre requisições.
 Use um serviço de containers ou VPS, como Render (Web Service), Railway, Fly.io, uma VM (DigitalOcean, Hetzner, Oracle Cloud, AWS EC2) ou um servidor próprio.
 
-> Estado atual: o projeto está **preparado** para publicação, mas **não foi publicado** em nenhuma hospedagem. Não havia credenciais nem acesso a provedores neste ambiente. Tudo abaixo foi verificado localmente; a verificação em produção (passo 5) deve ser feita após o deploy.
+> Estado atual: a versão Next-Gen (4.0) **não foi publicada** em nenhuma hospedagem, e a configuração da sua hospedagem não foi alterada. Tudo abaixo foi verificado localmente; a verificação em produção (passo 5) deve ser feita depois do deploy.
+
+## Atualizando uma publicação 3.0 já existente (ex.: Render)
+
+1. **Protocolo** passou de 3 para **4**: quem estiver com a página antiga aberta vê "Versão do servidor incompatível" e só precisa recarregar. O `/health` deve mostrar `"protocol": 4`.
+2. **Nova variável opcional `DATA_DIR`**: pasta da economia (contas, saldos, inventários). Sem ela, os dados ficam em `server/data/` dentro do serviço. **No Render gratuito o disco é efêmero**: cada deploy ou reinício apaga contas e saldos (os jogadores recebem uma conta nova automaticamente, com aviso na loja). Para manter os dados, crie um *Persistent Disk* (recurso pago) montado, por exemplo, em `/var/data` e defina `DATA_DIR=/var/data`. Detalhes em `ECONOMY.md`.
+3. **Nada mais muda**: comando de instalação/início, health check e demais variáveis são os mesmos.
+4. **Teste antes** localmente (`npm install`, `npm start`): busca pública (completa com bots após ~8 s), loja, pós-partida.
+
+## Atualizando uma publicação 2.0 já existente (ex.: Render)
+
+1. **Teste a 3.0 localmente antes** (`npm install`, `npm start`, `http://localhost:2567`, duas janelas).
+2. **Não envie `server/node_modules`** ao repositório; a hospedagem roda `npm install`.
+3. **Controle a publicação:** se o *Auto-Deploy* do Render estiver ligado, cada envio para a branch configurada é publicado. Para testar antes de substituir a versão online, envie para outra branch ou desative o *Auto-Deploy* até aprovar.
+4. **Configuração:** as variáveis de ambiente, o comando de instalação/início e o health check **não mudam** na 3.0.
+5. **Protocolo:** passou de 2 para **3**. Jogadores com a página 2.0 aberta veem "Versão do servidor incompatível" e só precisam recarregar.
+6. **Primeiro carregamento:** baixa cerca de 7 MB a mais (modelos GLB + three.js local). O servidor envia esses arquivos com cache de 1 hora.
 
 ## Opção A (recomendada): cliente e servidor no mesmo domínio
 
@@ -69,7 +85,7 @@ Exemplo: cliente em GitHub Pages, Netlify ou Cloudflare Pages, e servidor no Ren
 
 1. **Servidor**: publique como na opção A, com `SERVE_CLIENT=false` e `ALLOWED_ORIGINS=https://SEU-CLIENTE`.
 2. **Cliente**: publique os arquivos da raiz, **sem** a pasta `server/`.
-   Os arquivos necessários são `index.html`, `style.css`, os `*.js` da raiz, `shared/` e `online/`.
+   Os arquivos necessários são `index.html`, `style.css`, `favicon.svg`, os `*.js` da raiz e as pastas `shared/` (com `shared/maps/`), `online/`, `characters/`, `ui/`, `assets/` e `vendor/`.
    Antes de publicar, edite **um único arquivo**, `client-config.js`:
    ```js
    export const CLIENT_CONFIG = { serverUrl: 'https://SEU-SERVIDOR' };
@@ -87,5 +103,6 @@ Exemplo: cliente em GitHub Pages, Netlify ou Cloudflare Pages, e servidor no Ren
 - **Logs**: uma linha por evento (`room.create`, `player.join`, `player.drop`, `player.reconnect`, `player.leave`, `room.dispose`, `ws.origin_rejected`).
 - **Limites**: `MAX_CONNECTIONS_PER_IP` limita conexões simultâneas por IP.
   Com `TRUST_PROXY=true` o IP vem do cabeçalho `X-Forwarded-For`, que só é confiável atrás de um proxy controlado pela hospedagem.
-- **Segredos**: o cliente não recebe tokens nem segredos.
+- **Economia**: contas e transações ficam em `DATA_DIR` (`economy.json` gravado de forma atômica + `transactions.jsonl`). Faça backup dessa pasta se ela estiver num disco persistente. Um único processo é o dono dos dados (não rode duas instâncias apontando para a mesma pasta).
+- **Segredos**: o cliente não recebe segredos do servidor; o token da conta é gerado pelo servidor e só o hash é armazenado.
   O `.env` não é servido nem copiado para a imagem Docker (`.dockerignore`).

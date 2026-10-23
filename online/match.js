@@ -14,10 +14,10 @@ import { BTN, MSG, CMSG, PHASE, TEAM, TEAM_LABELS, MODE_LABELS, PHASE_LABELS, SP
 import { stepMovement, createCommand } from '../shared/movement.js';
 import { rayVsPlayer } from '../shared/hitboxes.js';
 import { smokeCenter, smokeBlocksSegment, smokeImmersion } from '../shared/smoke-rules.js';
-import { zoneAt } from '../shared/arena-layout.js';
 import { wrapAngle, clamp, damp, relativeYaw } from '../utils.js';
 import { AvatarManager } from './avatars.js';
 import { SpikeVisual } from './spike.js';
+import { decodeEquipped } from '../shared/skins.js';
 
 const DT = 1 / GAME.net.tickRate;
 const STEP_MS = 1000 / GAME.net.tickRate;
@@ -61,7 +61,7 @@ export class NetMatch {
       clock: document.querySelector('.net-clock'), status: $('net-status'), ping: $('net-ping'), teamTag: $('net-team-tag'),
       objBar: $('objective-bar'), objLabel: $('objective-label'), objFill: $('objective-fill'),
       death: $('death-overlay'), deathDetail: $('death-detail'), banner: $('round-banner'), bannerTitle: $('round-banner-title'), bannerText: $('round-banner-text'),
-      scoreboard: $('scoreboard'), sb1: $('sb-team-1'), sb2: $('sb-team-2'), sbScore1: $('sb-score-1'), sbScore2: $('sb-score-2'),
+      kd: $('net-kd'), scoreboard: $('scoreboard'), sb1: $('sb-team-1'), sb2: $('sb-team-2'), sbScore1: $('sb-score-1'), sbScore2: $('sb-score-2'),
       overlay: $('net-overlay'), overlayTitle: $('net-overlay-title'), overlayText: $('net-overlay-text'),
     };
     this.bannerT = 0;
@@ -93,6 +93,7 @@ export class NetMatch {
     room.onMessage(MSG.REJECT, (m) => this.onReject(m));
     room.onMessage(MSG.ROUND, (m) => this.onRound(m));
     room.onMessage(MSG.ABILITY, (m) => this.onAbility(m));
+    room.onMessage(MSG.REWARD, (m) => { this.reward = m; this.game.account.applyReward(m); this.lobbyTimer = 0; });
     room.onDrop((code) => this.setConnection('reconnecting', code));
     room.onReconnect(() => { this.setConnection('connected'); this.forceSnap = true; });
     room.onLeave((code) => { if (!this.disposed) this.onConnectionLost(code); });
@@ -125,8 +126,8 @@ export class NetMatch {
     const input = this.game.input;
     const self = this;
     return {
-      isDown: (c) => input.isDown(c),
-      wasPressed: (c) => self.tickEdges.has(c),
+      down: (a) => input.down(a),
+      pressedAction: (a) => self.tickEdges.has(a),
       isButtonDown: (b) => input.isButtonDown(b),
       wasButtonPressed: (b) => input.wasButtonPressed(b),
     };
@@ -134,7 +135,7 @@ export class NetMatch {
 
   latchEdges() {
     const input = this.game.input;
-    for (const code of ['Space', 'KeyR', 'KeyE', 'Digit1', 'Digit2']) if (input.wasPressed(code)) this.latch.add(code);
+    for (const action of ['jump', 'reload', 'ability', 'primary', 'secondary']) if (input.pressedAction(action)) this.latch.add(action);
   }
 
   // ---- quadro de renderização ----------------------------------------------------
@@ -144,7 +145,7 @@ export class NetMatch {
     if (!me) { g.updateMenuCamera(dt); return; }
     const playing = g.state === 'playing';
     this.updateScreens(dt);
-    if (playing) { g.player.look(g.input, g.weapon.adsT); this.latchEdges(); }
+    if (playing) { g.player.look(g.input, g.weapon.adsT, g.weapon.current.def.viewmodel.adsFovScale); this.latchEdges(); }
     else g.input.consumeMouse({ dx: 0, dy: 0 });
 
     // passos fixos de simulação/envio (limitado a 250 ms para não acumular após travamentos;
@@ -222,11 +223,11 @@ export class NetMatch {
     const viewPitch = fround(clamp(p.pitch + p.recoilPitch, -GAME.pitchLimit, GAME.pitchLimit));
     const adsHeld = canAct && input.isButtonDown(2) && !w.reloading && !w.switching;
     const c = this.cmd;
-    c.f = playing && canMove ? (input.isDown('KeyW') ? 1 : 0) - (input.isDown('KeyS') ? 1 : 0) : 0;
-    c.r = playing && canMove ? (input.isDown('KeyD') ? 1 : 0) - (input.isDown('KeyA') ? 1 : 0) : 0;
-    c.jump = playing && canMove && this.tickEdges.has('Space');
-    c.crouch = playing && alive && (input.isDown('ControlLeft') || input.isDown('ControlRight') || input.isDown('KeyC'));
-    c.walk = playing && (input.isDown('ShiftLeft') || input.isDown('ShiftRight'));
+    c.f = playing && canMove ? (input.down('forward') ? 1 : 0) - (input.down('back') ? 1 : 0) : 0;
+    c.r = playing && canMove ? (input.down('right') ? 1 : 0) - (input.down('left') ? 1 : 0) : 0;
+    c.jump = playing && canMove && this.tickEdges.has('jump');
+    c.crouch = playing && alive && input.down('crouch');
+    c.walk = playing && input.down('walk');
     c.ads = adsHeld ? 1 : 0;
     c.yaw = viewYaw;
 
@@ -243,9 +244,9 @@ export class NetMatch {
     if (c.walk) btn |= BTN.WALK;
     if (c.ads) btn |= BTN.ADS;
     if (this.pendingShot) btn |= BTN.FIRE;
-    if (playing && alive && this.tickEdges.has('KeyR')) btn |= BTN.RELOAD;
-    if (canAct && this.tickEdges.has('KeyE')) btn |= BTN.ABILITY;
-    if (playing && alive && input.isDown('KeyF')) btn |= BTN.INTERACT;
+    if (playing && alive && this.tickEdges.has('reload')) btn |= BTN.RELOAD;
+    if (canAct && this.tickEdges.has('ability')) btn |= BTN.ABILITY;
+    if (playing && alive && input.down('interact')) btn |= BTN.INTERACT;
     d.btn = btn;
     d.yaw = viewYaw;
     d.pitch = viewPitch;
@@ -265,7 +266,7 @@ export class NetMatch {
     let hitAvatar = null;
     for (const a of this.avatars.avatars.values()) {
       if (!a.alive || !a.root.visible || a.team === this.me.team) continue;
-      const h = rayVsPlayer(eye, dir, best, a.pos.x, a.pos.y, a.pos.z, a.h);
+      const h = rayVsPlayer(eye, dir, best, a.pos.x, a.pos.y, a.pos.z, a.h, a.pose());
       if (h && h.t < best) { best = h.t; hitAvatar = a; }
     }
     end.copy(eye).addScaledVector(dir, best);
@@ -282,6 +283,8 @@ export class NetMatch {
     this.lastStateAt = performance.now();
     const me = this.me;
     if (!me) return;
+    // o mapa da sala é decidido pelo servidor: todos os jogadores carregam o mesmo
+    if (this.state.map && this.state.map !== this.game.map.id) { this.game.setMap(this.state.map); this.forceSnap = true; }
     this.recordSnapshots();
     this.reconcile(me);
     this.syncWeapon(me);
@@ -296,7 +299,7 @@ export class NetMatch {
     const t = clock.lastServerTime() || clock.serverNow();
     this.state.players.forEach((p, sid) => {
       if (sid === this.sid) return;
-      const a = this.avatars.ensure(sid, p.team, p.name);
+      const a = this.avatars.ensure(sid, p.team, p.name, p.operator);
       a.push(t, p, p.spawnSeq);
     });
   }
@@ -347,6 +350,9 @@ export class NetMatch {
   /** Munição oficial: aplicada quando não há disparo/recarga/troca local aguardando confirmação. */
   syncWeapon(me) {
     const w = this.game.weapon;
+    // kit confirmado pelo servidor (a arma primária muda só no surgimento)
+    w.setSkins(decodeEquipped(me.skins));
+    if (me.primary && me.primary !== w.primaryId) { w.setLoadout(me.primary); w.emitAmmo(); }
     const acked = this.input.lastProcessed, sent = this.input.sentCount;
     for (let seq = acked + 1; seq <= sent; seq++) {
       const f = this.input.at(seq);
@@ -377,6 +383,8 @@ export class NetMatch {
       this.banner(`RODADA ${this.state.round}`, att ? 'ATAQUE — instale o dispositivo em A ou B' : 'DEFESA — proteja os objetivos A e B', 3);
     }
     if (to === PHASE.ROUND_LIVE) this.banner('VALENDO', '', 1.2);
+    if (to === PHASE.COUNTDOWN) this.reward = null;
+    if (to === PHASE.LOBBY && this.readyAgain) { this.readyAgain = false; this.room.send(CMSG.READY, { ready: true }); }
     if (to === PHASE.ENDED || to === PHASE.LOBBY) {
       if (document.pointerLockElement) document.exitPointerLock();
       g.state = 'online';
@@ -387,6 +395,7 @@ export class NetMatch {
 
   enterGameView() {
     const g = this.game;
+    g.menu.exitLobbyOverlay();
     g.ui.showScreen(null);
     g.ui.showHUD(true);
     if (g.state !== 'playing') g.ui.showLockPrompt(true, 'CLIQUE PARA ENTRAR NA PARTIDA');
@@ -399,7 +408,8 @@ export class NetMatch {
     if (this.connection !== 'connected') return;
     if (st.phase === PHASE.LOBBY || (st.phase === PHASE.COUNTDOWN && !(this.me && this.me.alive))) {
       this.lobbyTimer -= dt;
-      if (g.ui.currentScreen !== 'lobby' && g.ui.currentScreen !== 'settings' && g.ui.currentScreen !== 'controls') {
+      const allowed = g.ui.currentScreen === 'lobby' || g.ui.currentScreen === 'settings' || g.ui.currentScreen === 'controls' || (g.ui.currentScreen === 'menu' && g.menu.fromLobby);
+      if (!allowed) {
         g.ui.showScreen('lobby');
         g.ui.showHUD(false);
         g.ui.showLockPrompt(false);
@@ -408,7 +418,7 @@ export class NetMatch {
     } else if (st.phase === PHASE.ENDED) {
       if (g.ui.currentScreen !== 'net-end') { g.ui.showScreen('net-end'); g.ui.showHUD(false); g.ui.showLockPrompt(false); }
       this.lobbyTimer -= dt;
-      if (this.lobbyTimer <= 0) { this.lobbyTimer = 0.25; this.menu.renderEnd(st, this.sid); }
+      if (this.lobbyTimer <= 0) { this.lobbyTimer = 0.25; this.menu.renderEnd(st, this.sid, this.reward, this.readyAgain); }
     } else if (g.ui.currentScreen === 'lobby' || g.ui.currentScreen === 'net-end') {
       this.enterGameView();
     }
@@ -431,6 +441,9 @@ export class NetMatch {
       if (!p) { this.avatars.remove(sid); continue; }
       a.setTeam(p.team);
       a.setName(p.name);
+      a.setOperator(p.operator);
+      a.setSkins(p.skins);
+      a.setWeaponState(p.slot === 2 ? 'pistol' : p.primary, p.reloading);
       if (a.alive && !p.alive) this.game.audio.play('kill', { at: a.pos });
       a.alive = p.alive && IN_GAME.has(this.phase);
       a.connected = p.connected;
@@ -457,7 +470,8 @@ export class NetMatch {
     const from = a && a.root.visible ? a.getMuzzleWorld(new THREE.Vector3()) : new THREE.Vector3(m.o[0], m.o[1], m.o[2]);
     if (a) a.fire();
     g.effects.tracer(from, end, 'enemy');
-    g.audio.play('enemyShot', { at: from });
+    const sp = this.state.players.get(m.s);
+    g.audio.play(sp && sp.slot === 1 && sp.primary === 'sniper' ? 'remoteSniperShot' : 'enemyShot', { at: from });
     if (m.k === 0) {
       _dir.set(m.e[0] - m.o[0], m.e[1] - m.o[1], m.e[2] - m.o[2]).normalize();
       const hit = g.map.raycast(new THREE.Vector3(m.o[0], m.o[1], m.o[2]), _dir, 200, {});
@@ -572,7 +586,8 @@ export class NetMatch {
     this.set('phase', (v) => { this.el.phase.textContent = v; }, planted ? 'DISPOSITIVO ATIVO' : PHASE_LABELS[st.phase] || '');
     this.set('round', (v) => { this.el.round.textContent = v; }, tactical ? `RODADA ${st.round} · MELHOR DE ${st.roundsToWin * 2 - 1}` : `LIMITE ${st.scoreLimit}`);
     this.set('planted', (v) => this.el.clock.classList.toggle('planted', v), planted);
-    this.set('ping', (v) => { this.el.ping.textContent = v; }, `${Math.round(this.ping)} ms`);
+    // latência numérica só se o jogador quiser (o ponto de conexão fica sempre visível)
+    this.set('ping', (v) => { this.el.ping.textContent = v; this.el.ping.hidden = !v; }, this.game.settings.showPing ? `${Math.round(this.ping)} ms` : '');
     const quality = this.ping > 180 || this.connection !== 'connected' ? 'bad' : this.ping > 100 ? 'warn' : '';
     this.set('quality', (v) => { this.el.status.className = v; }, quality);
     this.set('team', (v) => { this.el.teamTag.textContent = TEAM_LABELS[v]; this.el.teamTag.className = `team-tag ${v === TEAM.ALFA ? 'alfa' : 'omega'}`; }, me.team);
@@ -584,7 +599,7 @@ export class NetMatch {
       else objective = attacking ? 'Instale o dispositivo em A ou B [F segurado]' : 'Defenda os objetivos A e B';
     } else objective = `Equipe ${TEAM_LABELS[me.team]}: ${st.scoreLimit} eliminações para vencer`;
     ui.setObjective(objective);
-    ui.setZone(zoneAt(g.player.position.x, g.player.position.z));
+    ui.setZone(g.map.zoneAt(g.player.position.x, g.player.position.z));
     // ação de objetivo
     const acting = st.spike.actor === this.sid && me.action > 0;
     this.set('objBar', (v) => this.el.objBar.classList.toggle('hidden', !v), acting);
@@ -604,7 +619,7 @@ export class NetMatch {
     if (this.bannerT > 0) this.bannerT -= dt;
     this.set('banner', (v) => this.el.banner.classList.toggle('hidden', !v), this.bannerT > 0);
     // placar (Tab)
-    const showBoard = g.state === 'playing' && g.input.isDown('Tab');
+    const showBoard = g.state === 'playing' && g.input.down('scoreboard');
     this.set('board', (v) => this.el.scoreboard.classList.toggle('hidden', !v), showBoard);
     if (showBoard) this.renderScoreboard();
     // vida, estado, habilidade, mira (valores oficiais do servidor)
@@ -613,9 +628,14 @@ export class NetMatch {
     const cd = me.abilityCd;
     ui.setAbility({ ready: cd <= 0 && me.alive, cooldown: cd, cooldownFrac: clamp(cd / GAME.abilities.smoke.cooldown, 0, 1), activeRemaining: 0 });
     ui.setReload(g.weapon.getReloadProgress(), g.weapon.reloading);
-    const gap = (Math.tan(g.weapon.currentSpread) / Math.tan((g.camera.fov * Math.PI) / 360)) * (g.viewportHeight / 2);
-    ui.setCrosshairGap(4 + gap);
-    ui.setCrosshairVisible(me.alive && (g.weapon.adsT < 0.6 || g.weapon.current.def.id !== 'rifle'));
+    g.updateCrosshair(g.player.getMovementState(), me.alive);
+    this.set('kd', (v) => { this.el.kd.textContent = v; }, `${me.kills} E · ${me.deaths} M`);
+    // minimapa: você e ALIADOS apenas (posições inimigas nunca são desenhadas)
+    const allies = this._allies || (this._allies = []);
+    allies.length = 0;
+    for (const a of this.avatars.avatars.values()) if (a.team === me.team && a.connected) allies.push({ x: a.pos.x, z: a.pos.z, yaw: a.yaw, alive: a.alive });
+    const spike = st.spike;
+    g.updateMinimap(dt, allies, { spike: { x: spike.x, z: spike.z, active: planted } });
     let imm = 0;
     for (const c of this.smokeCenters || []) imm = Math.max(imm, smokeImmersion(c, g.camera.position));
     ui.setSmoke(Math.min(1, imm * 1.8) * 0.92);
@@ -628,7 +648,7 @@ export class NetMatch {
     [...st.players.entries()].sort((a, b) => b[1].score - a[1].score).forEach(([sid, p]) => {
       const tr = document.createElement('tr');
       tr.className = `${sid === this.sid ? 'me' : ''} ${p.alive ? '' : 'dead'}`;
-      [p.name + (p.connected ? '' : ' (offline)'), p.kills, p.deaths, p.score, p.ping].forEach((v) => { const td = document.createElement('td'); td.textContent = String(v); tr.append(td); });
+      [p.name + (p.connected ? '' : ' (offline)'), p.kills, p.deaths, p.score, p.bot ? 'BOT' : p.ping].forEach((v) => { const td = document.createElement('td'); td.textContent = String(v); tr.append(td); });
       (rows[p.team] || rows[TEAM.ALFA]).push(tr);
     });
     this.el.sb1.replaceChildren(...rows[TEAM.ALFA]);
@@ -648,6 +668,16 @@ export class NetMatch {
   requestStart() { this.room.send(CMSG.START); }
 
   switchTeam() { const me = this.me; if (me) this.room.send(CMSG.TEAM, { team: me.team === TEAM.ALFA ? TEAM.OMEGA : TEAM.ALFA }); }
+
+  /** Pós-partida: continuar na sala e entrar pronto na próxima partida. */
+  playAgain() {
+    this.readyAgain = true;
+    this.lobbyTimer = 0;
+    if (this.state.phase === PHASE.LOBBY) { this.readyAgain = false; this.room.send(CMSG.READY, { ready: true }); }
+  }
+
+  /** Bots da sala privada (o servidor valida anfitrião, fase e limites). */
+  bots(op, extra = {}) { this.room.send(CMSG.BOTS, { op, ...extra }); }
 }
 
-const NO_INPUT = { isDown: () => false, wasPressed: () => false, isButtonDown: () => false, wasButtonPressed: () => false };
+const NO_INPUT = { down: () => false, pressedAction: () => false, isDown: () => false, wasPressed: () => false, isButtonDown: () => false, wasButtonPressed: () => false };

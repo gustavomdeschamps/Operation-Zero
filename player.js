@@ -5,10 +5,20 @@ import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { clamp, damp, invLerp } from './utils.js';
 import { createMoveState, createCommand, stepMovement, movementState } from './shared/movement.js';
-const GAME_KEYS = new Set([
-  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight',
-  'KeyC', 'KeyR', 'KeyE', 'Digit1', 'Digit2', 'Tab',
-]);
+
+/** Ações do jogo e teclas padrão (remapeáveis nas configurações). */
+export const DEFAULT_BINDS = {
+  forward: ['KeyW'], back: ['KeyS'], left: ['KeyA'], right: ['KeyD'],
+  jump: ['Space'], crouch: ['KeyC', 'ControlLeft', 'ControlRight'], walk: ['ShiftLeft', 'ShiftRight'],
+  reload: ['KeyR'], ability: ['KeyE'], interact: ['KeyF'], primary: ['Digit1'], secondary: ['Digit2'],
+  scoreboard: ['Tab'], map: ['KeyM'],
+};
+
+export const ACTION_LABELS = {
+  forward: 'Mover para frente', back: 'Mover para trás', left: 'Mover para a esquerda', right: 'Mover para a direita',
+  jump: 'Pular', crouch: 'Agachar', walk: 'Caminhar (silencioso)', reload: 'Recarregar', ability: 'Névoa Ciano',
+  interact: 'Instalar / desarmar', primary: 'Arma primária', secondary: 'Pistola', scoreboard: 'Placar', map: 'Mapa tático',
+};
 
 export class InputManager {
   constructor(element) {
@@ -20,9 +30,10 @@ export class InputManager {
     this.mouseDX = 0;
     this.mouseDY = 0;
     this.enabled = false;           // só aceita entrada de jogo quando a partida está ativa
+    this.setBinds(DEFAULT_BINDS);
     this._onKeyDown = (e) => {
       if (!this.enabled) return;
-      if (GAME_KEYS.has(e.code)) e.preventDefault();
+      if (this.boundCodes.has(e.code)) e.preventDefault();
       if (!this.keys.has(e.code)) this.pressed.add(e.code);
       this.keys.add(e.code);
     };
@@ -64,6 +75,21 @@ export class InputManager {
     this.element.removeEventListener('contextmenu', this._onContext);
   }
 
+  /** Define o mapa ação → teclas (aceita string ou lista por ação). */
+  setBinds(binds) {
+    this.binds = {};
+    for (const [action, def] of Object.entries(DEFAULT_BINDS)) {
+      const v = binds && binds[action];
+      this.binds[action] = Array.isArray(v) && v.length ? v.slice(0, 3) : typeof v === 'string' && v ? [v] : def.slice();
+    }
+    this.boundCodes = new Set(Object.values(this.binds).flat());
+  }
+
+  /** A ação está pressionada agora? */
+  down(action) { const c = this.binds[action]; return !!c && c.some((k) => this.keys.has(k)); }
+  /** A ação foi acionada neste quadro? */
+  pressedAction(action) { const c = this.binds[action]; return !!c && c.some((k) => this.pressed.has(k)); }
+
   isDown(code) { return this.keys.has(code); }
   wasPressed(code) { return this.pressed.has(code); }
   isButtonDown(b) { return this.buttons.has(b); }
@@ -103,6 +129,9 @@ export class Player {
     this.recoilYaw = 0;
     this.punchRoll = 0;
     this.sensitivity = CONFIG.input.baseSensitivity * CONFIG.input.sensitivity;
+    this.sensitivityY = 1;          // multiplicador do eixo vertical
+    this.invertY = false;
+    this.adsSensitivity = 1;        // multiplicador ao mirar (ADS)
     this.health = this.cfg.maxHealth;
     this.alive = true;
     this.spawnPoint = { x: this.cfg.spawn.x, z: this.cfg.spawn.z, yaw: this.cfg.spawn.yaw };
@@ -144,7 +173,12 @@ export class Player {
     this.applyCamera();
   }
 
-  setSensitivity(multiplier) { this.sensitivity = CONFIG.input.baseSensitivity * multiplier; }
+  setSensitivity(multiplier, { vertical = 1, invertY = false, ads = 1 } = {}) {
+    this.sensitivity = CONFIG.input.baseSensitivity * multiplier;
+    this.sensitivityY = vertical;
+    this.invertY = invertY;
+    this.adsSensitivity = ads;
+  }
 
   get eyeHeight() { return this.height - this.cfg.eyeFromTop; }
 
@@ -182,9 +216,9 @@ export class Player {
   }
 
   /** Atualização completa do modo offline (passo variável). */
-  update(dt, input, { lookEnabled = true, adsFactor = 0 } = {}) {
-    if (lookEnabled) this.look(input, adsFactor);
-    this.sampleCommand(input, adsFactor, input.wasPressed('Space'));
+  update(dt, input, { lookEnabled = true, adsFactor = 0, zoom = 1 } = {}) {
+    if (lookEnabled) this.look(input, adsFactor, zoom);
+    this.sampleCommand(input, adsFactor, input.pressedAction('jump'));
     const res = this.simulate(this.cmd, dt);
     if (res.fellOut) this.reset();
     this.updateRegen(dt);
@@ -192,11 +226,14 @@ export class Player {
   }
 
   /** Aplica o movimento do mouse à visão (a cada quadro, para resposta imediata). */
-  look(input, adsFactor = 0) {
+  look(input, adsFactor = 0, zoom = 1) {
     input.consumeMouse(this._mouse);
-    const sens = this.sensitivity * (1 - adsFactor * 0.18);
+    // ao mirar: redução padrão de 18% multiplicada pela sensibilidade de ADS escolhida;
+    // lunetas (zoom forte) reduzem a sensibilidade na proporção do campo de visão
+    const scopeScale = 1 + adsFactor * (Math.min(1, zoom * 1.25) - 1);
+    const sens = this.sensitivity * (1 - adsFactor * 0.18) * (1 + adsFactor * (this.adsSensitivity - 1)) * scopeScale;
     this.yaw -= this._mouse.dx * sens;
-    let dp = -this._mouse.dy * sens;
+    let dp = -this._mouse.dy * sens * this.sensitivityY * (this.invertY ? -1 : 1);
     // puxar o mouse para baixo durante o recuo "absorve" o recuo antes de mover a visão base
     if (dp < 0 && this.recoilPitch > 0) {
       const absorb = Math.min(-dp, this.recoilPitch);
@@ -209,11 +246,11 @@ export class Player {
   /** Lê o teclado e preenche o comando de movimento do passo. */
   sampleCommand(input, adsFactor, jumpEdge) {
     const c = this.cmd;
-    c.f = (input.isDown('KeyW') ? 1 : 0) - (input.isDown('KeyS') ? 1 : 0);
-    c.r = (input.isDown('KeyD') ? 1 : 0) - (input.isDown('KeyA') ? 1 : 0);
+    c.f = (input.down('forward') ? 1 : 0) - (input.down('back') ? 1 : 0);
+    c.r = (input.down('right') ? 1 : 0) - (input.down('left') ? 1 : 0);
     c.jump = !!jumpEdge;
-    c.crouch = input.isDown('ControlLeft') || input.isDown('ControlRight') || input.isDown('KeyC');
-    c.walk = input.isDown('ShiftLeft') || input.isDown('ShiftRight');
+    c.crouch = input.down('crouch');
+    c.walk = input.down('walk');
     c.ads = adsFactor;
     c.yaw = this.yaw;
     return c;

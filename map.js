@@ -1,12 +1,13 @@
-// Apresentação da arena FOUNDRY-7: materiais procedurais, iluminação, céu e o builder visual
-// do layout compartilhado (shared/arena-layout.js). Colisões e consultas físicas vêm de
-// shared/arena-collision.js — a mesma representação usada pelo servidor.
+// Apresentação dos mapas (Foundry-7, Porto Vesper): materiais procedurais, iluminação, céu, água e
+// o builder visual do layout compartilhado (shared/arena-layout.js). Colisões e consultas físicas
+// vêm de shared/arena-collision.js — a mesma representação usada pelo servidor.
+// Os materiais são criados uma vez; trocar de mapa só reconstrói a geometria do mapa.
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import {
   createCanvas, paintNoise, createRng, createWorldBoxGeometry, mergeGeometries, disposeObject3D,
 } from './utils.js';
-import { buildArenaLayout, siteMarkers, BOT_SPAWNS, ZONES, BOUNDS, zoneAt } from './shared/arena-layout.js';
+import { buildArenaLayout, siteMarkers, getMapDef, zoneAt } from './shared/arena-layout.js';
 import { getArenaCollision } from './shared/arena-collision.js';
 
 // ---------------------------------------------------------------------------
@@ -247,13 +248,18 @@ function makeAmmoIconCanvas() {
 // ---------------------------------------------------------------------------
 
 export class GameMap {
-  constructor(scene, { anisotropy = 4 } = {}) {
+  constructor(scene, { anisotropy = 4, mapId = 'foundry7' } = {}) {
     this.scene = scene;
     this.anisotropy = anisotropy;
     this.root = new THREE.Group();
     this.root.name = 'map';
-    this.collision = getArenaCollision();
+    this.layer = null;                 // geometria do mapa atual (reconstruída ao trocar de mapa)
+    this.def = getMapDef(mapId);
+    this.collision = getArenaCollision(this.def.id);
     this.colliders = this.collision.colliders;
+    this.mapTextures = [];
+    this.waters = [];
+    this.pointLights = [];
     this.buckets = new Map();
     this.materials = {};
     this.textures = [];
@@ -261,8 +267,8 @@ export class GameMap {
     this.animated = [];
     this.ammoStations = [];
     this.enemySpawns = [];
-    this.zones = ZONES;
-    this.bounds = BOUNDS;
+    this.zones = this.def.zones;
+    this.bounds = this.def.bounds;
     this.sunDirection = new THREE.Vector3(-0.52, 0.42, 0.74).normalize();
     this.rng = createRng(1337);
   }
@@ -307,6 +313,10 @@ export class GameMap {
       containerBlue: std({ map: corrTex, bumpMap: corrBump, bumpScale: 1.2, color: 0x2e4d7c, roughness: 0.62, metalness: 0.35 }),
       containerRust: std({ map: corrTex, bumpMap: corrBump, bumpScale: 1.2, color: 0x8c3a2a, roughness: 0.7, metalness: 0.3 }),
       containerGray: std({ map: corrTex, bumpMap: corrBump, bumpScale: 1.2, color: 0x7b828a, roughness: 0.62, metalness: 0.35 }),
+      containerGreen: std({ map: corrTex, bumpMap: corrBump, bumpScale: 1.2, color: 0x3f6b3c, roughness: 0.64, metalness: 0.32 }),
+      containerYellow: std({ map: corrTex, bumpMap: corrBump, bumpScale: 1.2, color: 0xd1a02a, roughness: 0.6, metalness: 0.35 }),
+      asphalt: std({ map: floorTex, bumpMap: floorBump, bumpScale: 0.35, color: 0x6c6e70, roughness: 0.94, metalness: 0 }),
+      woodDeck: std({ map: crateTex, color: 0xa88a66, roughness: 0.85, metalness: 0.02 }),
       crate: std({ map: crateTex, roughness: 0.8, metalness: 0.1 }),
       hazard: std({ map: hazardTex, roughness: 0.7, metalness: 0.1 }),
       rubber: std({ color: 0x1b1d20, roughness: 0.95, metalness: 0 }),
@@ -402,50 +412,177 @@ export class GameMap {
   sign(lines, { position, rotationY = 0, width = 2, height = 1, style = {} }) {
     const canvas = makeSignCanvas(lines, style);
     const t = finishTexture(canvas, { anisotropy: this.anisotropy });
-    this.textures.push(t);
+    this.mapTextures.push(t);
     const mat = new THREE.MeshStandardMaterial({ map: t, emissive: 0xffffff, emissiveMap: t, emissiveIntensity: 0.35, roughness: 0.6, metalness: 0.2 });
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), mat);
     mesh.position.set(...position);
     mesh.rotation.y = rotationY;
-    this.root.add(mesh);
+    this.layer.add(mesh);
     return mesh;
   }
 
   floorLetter(letter, x, z, size = 3, color = '#e9eef2', rotationY = 0) {
     const t = finishTexture(makeBigLetterCanvas(letter, color), { anisotropy: this.anisotropy });
-    this.textures.push(t);
+    this.mapTextures.push(t);
     const mat = new THREE.MeshStandardMaterial({ map: t, transparent: true, opacity: 0.75, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, depthWrite: false });
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
     mesh.rotation.set(-Math.PI / 2, 0, rotationY);
     mesh.position.set(x, 0.014, z);
     mesh.receiveShadow = true;
-    this.root.add(mesh);
+    this.layer.add(mesh);
   }
 
   wallLetter(letter, position, rotationY, size = 3, color = '#e9eef2') {
     const t = finishTexture(makeBigLetterCanvas(letter, color), { anisotropy: this.anisotropy });
-    this.textures.push(t);
+    this.mapTextures.push(t);
     const mat = new THREE.MeshStandardMaterial({ map: t, transparent: true, roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3, depthWrite: false });
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
     mesh.position.set(...position);
     mesh.rotation.y = rotationY;
-    this.root.add(mesh);
+    this.layer.add(mesh);
   }
 
   // ---- layout -----------------------------------------------------------
+  /** Cria os recursos persistentes (materiais, céu, luzes principais) e carrega o mapa inicial. */
   build() {
     this.createMaterials();
+    this.sharedSet = new Set(Object.values(this.materials));
     this.buildSky();
     this.buildLights();
-    buildArenaLayout(this);          // layout compartilhado com o servidor
-    this.buildSiteMarkers();
-    this.buildSkyline();
-    this.defineEnemySpawns();
-    this.flush();
     this.scene.add(this.root);
+    this.load(this.def.id, true);
   }
 
-  buildSkyline() {
+  /**
+   * Troca de mapa: descarta só a geometria do mapa anterior e constrói a nova a partir do layout
+   * compartilhado. Retorna true se algo mudou (o jogo então regenera o mapa de ambiente).
+   */
+  load(mapId, force = false) {
+    const def = getMapDef(mapId);
+    if (!force && this.layer && this.def.id === def.id) return false;
+    if (this.layer) {
+      this.root.remove(this.layer);
+      disposeObject3D(this.layer, { keepShared: this.sharedSet });
+      for (const t of this.mapTextures) t.dispose();
+    }
+    this.mapTextures = [];
+    this.def = def;
+    this.collision = getArenaCollision(def.id);
+    this.colliders = this.collision.colliders;
+    this.zones = def.zones;
+    this.bounds = def.bounds;
+    this.ammoStations = [];
+    this.animated = [];
+    this.siteBeacons = [];
+    this.waters = [];
+    this.pointLights = [];
+    this.buckets.clear();
+    this.layer = new THREE.Group();
+    this.layer.name = `map-${def.id}`;
+    this.root.add(this.layer);
+    this.applyTheme(def.theme);
+    buildArenaLayout(this, def.id);            // layout compartilhado com o servidor
+    this.buildSiteMarkers();
+    this.buildSkyline(def.theme.skyline);
+    this.defineEnemySpawns();
+    this.flush();
+    return true;
+  }
+
+  get id() { return this.def.id; }
+
+  get name() { return this.def.name; }
+
+  /** Céu, sol, luz ambiente, neblina e luzes locais do mapa. */
+  applyTheme(theme) {
+    const u = this.sky.material.uniforms;
+    u.zenith.value.setHex(theme.sky.zenith);
+    u.mid.value.setHex(theme.sky.mid);
+    u.horizon.value.setHex(theme.sky.horizon);
+    u.ground.value.setHex(theme.sky.ground);
+    u.sunColor.value.setHex(theme.sky.sun);
+    this.sunDirection.set(...theme.sunDir).normalize();
+    u.sunDir.value.copy(this.sunDirection);
+    this.sun.color.setHex(theme.sunColor);
+    this.sun.intensity = theme.sunIntensity;
+    this.sun.position.copy(this.sunDirection).multiplyScalar(90);
+    this.hemi.color.setHex(theme.hemi[0]);
+    this.hemi.groundColor.setHex(theme.hemi[1]);
+    this.hemi.intensity = theme.hemi[2];
+    if (this.scene.fog) { this.scene.fog.color.setHex(theme.fog.color); this.scene.fog.density = theme.fog.density; }
+    this.exposure = theme.exposure ?? 1;
+    // a sombra cobre o mapa inteiro
+    const b = this.def.bounds;
+    const half = Math.max(b.maxX - b.minX, b.maxZ - b.minZ) * 0.68;
+    const sc = this.sun.shadow.camera;
+    sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half;
+    sc.updateProjectionMatrix();
+    for (const [color, intensity, distance, x, y, z] of theme.lights) {
+      const l = new THREE.PointLight(color, intensity, distance, 2);
+      l.position.set(x, y, z);
+      this.layer.add(l);
+      this.pointLights.push(l);
+    }
+  }
+
+  /** Água animada (somente visual) — usada além da borda do cais. */
+  water(x0, x1, z0, z1, y) {
+    if (!this.waterNormal) {
+      const c = createCanvas(256);
+      const ctx = c.getContext('2d');
+      const img = ctx.createImageData(256, 256);
+      const rng = createRng(4242);
+      const h = new Float32Array(256 * 256);
+      for (let i = 0; i < h.length; i++) h[i] = rng();
+      for (let pass = 0; pass < 4; pass++) {           // suaviza o ruído para ondulações
+        const n = new Float32Array(h.length);
+        for (let yy = 0; yy < 256; yy++) for (let xx = 0; xx < 256; xx++) {
+          let acc = 0;
+          for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) acc += h[((yy + dy) & 255) * 256 + ((xx + dx) & 255)];
+          n[yy * 256 + xx] = acc / 25;
+        }
+        h.set(n);
+      }
+      for (let yy = 0; yy < 256; yy++) for (let xx = 0; xx < 256; xx++) {
+        const dx = (h[yy * 256 + ((xx + 1) & 255)] - h[yy * 256 + ((xx - 1) & 255)]) * 18;
+        const dy = (h[((yy + 1) & 255) * 256 + xx] - h[((yy - 1) & 255) * 256 + xx]) * 18;
+        const i = (yy * 256 + xx) * 4;
+        img.data[i] = 128 + dx * 127; img.data[i + 1] = 128 + dy * 127; img.data[i + 2] = 255; img.data[i + 3] = 255;
+      }
+      ctx.putImageData(img, 0, 0);
+      this.waterNormal = finishTexture(c, { color: false, anisotropy: this.anisotropy });
+      this.waterNormal.repeat.set(26, 26);
+      this.textures.push(this.waterNormal);
+      this.waterMaterial = new THREE.MeshStandardMaterial({ color: 0x1d4a5a, roughness: 0.12, metalness: 0.25, normalMap: this.waterNormal, normalScale: new THREE.Vector2(0.7, 0.7) });
+      this.sharedSet?.add(this.waterMaterial);
+    }
+    const g = new THREE.PlaneGeometry(x1 - x0, z1 - z0);
+    g.rotateX(-Math.PI / 2);
+    const mesh = new THREE.Mesh(g, this.waterMaterial);
+    mesh.position.set((x0 + x1) / 2, y, (z0 + z1) / 2);
+    mesh.receiveShadow = true;
+    this.layer.add(mesh);
+    this.waters.push(mesh);
+  }
+
+  /** Pórtico rolante (vigas superiores, carro e cabos) — as pernas sólidas vêm do layout. */
+  crane(x0, x1, z0, z1, h) {
+    const beamMat = 'containerYellow';
+    for (const z of [z0, z1]) this.box(x0 - 0.6, x1 + 0.6, h, h + 1.2, z - 0.55, z + 0.55, beamMat, { collide: false });
+    this.box(x0 - 0.6, x1 + 0.6, h + 1.2, h + 1.5, (z0 + z1) / 2 - 0.4, (z0 + z1) / 2 + 0.4, 'metalTrim', { collide: false });
+    for (const x of [x0, x1]) this.box(x - 0.5, x + 0.5, h - 0.2, h + 1.2, z0, z1, beamMat, { collide: false });
+    for (let x = x0 + 2; x < x1 - 1; x += 3) this.box(x - 0.06, x + 0.06, h + 1.2, h + 1.5, z0, z1, 'metalTrim', { collide: false });
+    const tx = (x0 + x1) / 2 + 2;
+    this.box(tx - 1.4, tx + 1.4, h - 1.1, h, (z0 + z1) / 2 - 1.6, (z0 + z1) / 2 + 1.6, 'containerGray', { collide: false });
+    this.box(tx - 1.2, tx - 0.2, h - 1.0, h - 0.2, (z0 + z1) / 2 + 1.62, (z0 + z1) / 2 + 1.66, 'glassDark', { collide: false });
+    for (const dz of [-0.6, 0.6]) this.pipe([tx, h - 1.1, (z0 + z1) / 2 + dz], [tx, 5.2, (z0 + z1) / 2 + dz], 0.025, 'metalTrim');
+    this.box(tx - 0.8, tx + 0.8, 4.9, 5.2, (z0 + z1) / 2 - 0.9, (z0 + z1) / 2 + 0.9, 'hazard', { collide: false });
+    this.lightBar(x0 - 0.4, x0 + 0.4, h + 1.5, h + 1.6, z0 - 0.1, z0 + 0.1, 'lightRed');
+    this.lightBar(x1 - 0.4, x1 + 0.4, h + 1.5, h + 1.6, z1 - 0.1, z1 + 0.1, 'lightRed');
+  }
+
+  buildSkyline(kind = 'industrial') {
+    if (kind === 'port') { this.buildPortSkyline(); return; }
     const rng = createRng(77);
     const geos = [];
     const geosDark = [];
@@ -463,26 +600,71 @@ export class GameMap {
       g.translate(x, h / 2, z);
       geosDark.push(g);
     }
+    this.addSkylineMeshes(geos, geosDark);
+    for (const [x, z, h] of [[-70, -95, 70], [-58, -98, 62], [90, -60, 55]]) this.addBeacon(x, h + 0.6, z);
+  }
+
+  /** Horizonte do porto: navios ancorados, guindastes de cais, colinas e a cidade ao norte. */
+  buildPortSkyline() {
+    const rng = createRng(91);
+    const geos = [], geosDark = [];
+    // cidade e colinas ao norte e nas laterais
+    for (let i = 0; i < 40; i++) {
+      const x = -200 + rng() * 400;
+      const z = 80 + rng() * 120;
+      const w = 8 + rng() * 18, d = 8 + rng() * 14, h = 8 + rng() * 44;
+      const g = new THREE.BoxGeometry(w, h, d); g.translate(x, h / 2 - 2, z);
+      (rng() > 0.45 ? geos : geosDark).push(g);
+    }
+    for (const side of [-1, 1]) for (let i = 0; i < 10; i++) {
+      const g = new THREE.BoxGeometry(10 + rng() * 14, 6 + rng() * 22, 10 + rng() * 14);
+      g.translate(side * (70 + rng() * 60), 3, -30 + rng() * 100);
+      geosDark.push(g);
+    }
+    // navios no mar (casco + superestrutura + pilhas de contêineres)
+    for (const [x, z, len, ry] of [[-60, -120, 70, 0.12], [55, -165, 90, -0.08], [140, -95, 50, 0.35]]) {
+      const hull = new THREE.BoxGeometry(len, 7, len * 0.17);
+      hull.rotateY(ry); hull.translate(x, 1.5, z); geosDark.push(hull);
+      const bridge = new THREE.BoxGeometry(len * 0.12, 12, len * 0.15);
+      bridge.translate(-len * 0.38, 9, 0); bridge.rotateY(ry); bridge.translate(x, 0, z); geos.push(bridge);
+      for (let k = 0; k < 5; k++) {
+        const stack = new THREE.BoxGeometry(len * 0.11, 4 + (k % 3) * 2.6, len * 0.14);
+        stack.translate(-len * 0.2 + k * len * 0.13, 7, 0); stack.rotateY(ry); stack.translate(x, 0, z);
+        (k % 2 ? geos : geosDark).push(stack);
+      }
+    }
+    // guindastes de cais ao longe (oeste e leste)
+    for (const [x, z] of [[-75, -45], [-95, -45], [80, -48]]) {
+      for (const dx of [-5, 5]) { const leg = new THREE.BoxGeometry(1.4, 34, 1.4); leg.translate(x + dx, 17, z); geosDark.push(leg); }
+      const boom = new THREE.BoxGeometry(2, 2.4, 60); boom.translate(x, 34, z - 18); geosDark.push(boom);
+      const cab = new THREE.BoxGeometry(12, 6, 8); cab.translate(x, 31, z + 2); geos.push(cab);
+    }
+    this.addSkylineMeshes(geos, geosDark);
+    for (const [x, z] of [[-75, -45], [-95, -45], [80, -48]]) this.addBeacon(x, 36, z);
+  }
+
+  addSkylineMeshes(geos, geosDark) {
     const m1 = new THREE.Mesh(mergeGeometries(geos), this.materials.skyline);
     const m2 = new THREE.Mesh(mergeGeometries(geosDark), this.materials.skylineDark);
     geos.forEach((g) => g.dispose()); geosDark.forEach((g) => g.dispose());
-    this.root.add(m1, m2);
-    // luzes de obstáculo nas chaminés
-    for (const [x, z, h] of [[-70, -95, 70], [-58, -98, 62], [90, -60, 55]]) {
-      const b = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 6), this.materials.lightRed);
-      b.position.set(x, h + 0.6, z);
-      this.root.add(b);
-      this.animated.push({ type: 'blink', mesh: b, phase: x * 0.1 });
-    }
+    this.layer.add(m1, m2);
+  }
+
+  addBeacon(x, y, z) {
+    if (!this.beaconGeo) { this.beaconGeo = new THREE.SphereGeometry(0.7, 8, 6); this.sharedSet.add(this.beaconGeo); }
+    const b = new THREE.Mesh(this.beaconGeo, this.materials.lightRed);
+    b.position.set(x, y, z);
+    this.layer.add(b);
+    this.animated.push({ type: 'blink', mesh: b, phase: x * 0.1 });
   }
 
   /** Marcadores dos objetivos A/B do modo tático (ocultos fora dele). */
   buildSiteMarkers() {
     this.siteGroup = new THREE.Group();
     this.siteGroup.visible = false;
-    this.root.add(this.siteGroup);
+    this.layer.add(this.siteGroup);
     this.siteBeacons = [];
-    siteMarkers(this);
+    siteMarkers(this, this.def.id);
   }
 
   siteMarker(site) {
@@ -508,7 +690,7 @@ export class GameMap {
     this.siteGroup.add(beacon);
     this.siteBeacons.push(beacon);
     const t2 = finishTexture(makeBigLetterCanvas(site.id, '#ff8a5a'), { anisotropy: this.anisotropy });
-    this.textures.push(t2);
+    this.mapTextures.push(t2);
     const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: t2, transparent: true, depthWrite: false }));
     label.position.set(site.cx, 3.6, site.cz);
     label.scale.set(1.6, 1.6, 1);
@@ -521,18 +703,18 @@ export class GameMap {
     const stripMat = new THREE.MeshBasicMaterial({ color: 0x7ff6ff });
     const strip = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.05, 1.04), stripMat);
     strip.position.set(x, 0.75, z);
-    this.root.add(strip);
+    this.layer.add(strip);
     const iconTex = finishTexture(makeAmmoIconCanvas(), { anisotropy: this.anisotropy });
-    this.textures.push(iconTex);
+    this.mapTextures.push(iconTex);
     const iconMat = new THREE.MeshBasicMaterial({ map: iconTex, transparent: true, side: THREE.DoubleSide, depthWrite: false });
     const icon = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.5), iconMat);
     icon.position.set(x, 1.55, z);
     icon.rotation.y = rotationY;
-    this.root.add(icon);
+    this.layer.add(icon);
     const ring = new THREE.Mesh(new THREE.RingGeometry(1.45, 1.6, 40), new THREE.MeshBasicMaterial({ color: 0x2fc9d6, transparent: true, opacity: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(x, 0.015, z);
-    this.root.add(ring);
+    this.layer.add(ring);
     const station = { position: new THREE.Vector3(x, 0, z), cooldown: 0, strip, icon, ring, stripMat, iconMat };
     this.ammoStations.push(station);
     return station;
@@ -597,23 +779,14 @@ export class GameMap {
     const fill = new THREE.DirectionalLight(0x7d8fff, 0.35);
     fill.position.set(30, 25, -40);
     this.sun = sun;
+    this.hemi = hemi;
     this.root.add(hemi, sun, sun.target, fill);
     this.lights.push(hemi, sun, fill);
-    const point = (color, intensity, distance, x, y, z) => {
-      const l = new THREE.PointLight(color, intensity, distance, 2);
-      l.position.set(x, y, z);
-      this.root.add(l);
-      this.lights.push(l);
-      return l;
-    };
-    point(0x9ff4ff, 30, 22, 0, 4.6, 38);         // área de preparação
-    point(0xffb565, 40, 24, -17, 4.8, 15);       // armazém
-    point(0x6ff2ff, 22, 16, 0, 3.4, -16.5);      // núcleo
-    point(0xffc27a, 26, 18, 0, 4.0, 19);         // corredor central
   }
 
   /** Mapa de ambiente (reflexos/iluminação indireta) gerado a partir do céu procedural. */
   createEnvironment(renderer) {
+    this.envTarget?.dispose();
     const pmrem = new THREE.PMREMGenerator(renderer);
     const envScene = new THREE.Scene();
     const geo = new THREE.SphereGeometry(50, 32, 16);
@@ -645,7 +818,7 @@ export class GameMap {
       mesh.matrixAutoUpdate = false;
       mesh.updateMatrix();
       mesh.name = `static-${matKey}`;
-      this.root.add(mesh);
+      this.layer.add(mesh);
     }
     this.buckets.clear();
   }
@@ -653,12 +826,12 @@ export class GameMap {
   // ---- alvos ------------------------------------------------------------
   defineEnemySpawns() {
     // fromY abaixo das coberturas: bots nascem no piso ou nas plataformas (≤ 2,7 m)
-    this.enemySpawns = BOT_SPAWNS.map((s) => ({ ...s, y: this.groundHeight(s.x, s.z, 3.0, 0.3) }));
+    this.enemySpawns = this.def.botSpawns.map((s) => ({ ...s, y: this.groundHeight(s.x, s.z, 3.0, 0.3) }));
   }
 
-  zoneAt(x, z) { return zoneAt(x, z); }
+  zoneAt(x, z) { return zoneAt(x, z, this.def.id); }
 
-  isSafeZone(x, z) { return z > 31.6; }
+  isSafeZone(x, z) { return this.def.isSafeZone(x, z); }
 
   // ---- consultas físicas (delegadas à colisão compartilhada) -------------------
   /** Raio contra a geometria sólida. Preenche out.point/out.normal como THREE.Vector3. */
@@ -678,6 +851,10 @@ export class GameMap {
 
   // ---- animação de ambiente -------------------------------------------------
   update(dt, time) {
+    if (this.waterNormal && this.waters.length) {
+      this.waterNormal.offset.x = (time * 0.006) % 1;
+      this.waterNormal.offset.y = (time * 0.011) % 1;
+    }
     if (this.siteGroup.visible) for (const b of this.siteBeacons) b.material.opacity = 0.16 + Math.sin(time * 2.5) * 0.06;
     for (const a of this.animated) {
       if (a.type === 'blink') a.mesh.visible = Math.sin(time * 2.2 + a.phase) > 0.2;
@@ -696,6 +873,7 @@ export class GameMap {
     this.scene.remove(this.root);
     disposeObject3D(this.root);
     for (const t of this.textures) t.dispose();
+    for (const t of this.mapTextures) t.dispose();
     for (const m of Object.values(this.materials)) m.dispose();
     this.envTarget?.dispose();
   }

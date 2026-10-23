@@ -1,5 +1,4 @@
 // Escolha de pontos de surgimento válidos e justos.
-import { ONLINE_SPAWNS } from '../../../shared/arena-layout.js';
 import { GAME } from '../../../shared/game-config.js';
 
 /**
@@ -9,7 +8,8 @@ import { GAME } from '../../../shared/game-config.js';
 export function chooseSpawn(room, rec) {
   const mode = room.state.mode;
   if (mode === 'tactical') {
-    const list = ONLINE_SPAWNS[rec.state.team] || ONLINE_SPAWNS.tdm;
+    const spawns = room.mapDef.onlineSpawns;
+    const list = spawns[rec.state.team] || spawns.tdm;
     const teammates = [...room.records.values()].filter((r) => r.state.team === rec.state.team);
     const idx = Math.max(0, teammates.indexOf(rec)) % list.length;
     return list[idx];
@@ -22,7 +22,7 @@ export function chooseSpawn(room, rec) {
     if (r.state.team !== rec.state.team) enemies.push(r.move.pos);
   }
   let best = null, bestScore = -Infinity;
-  for (const p of ONLINE_SPAWNS.tdm) {
+  for (const p of room.mapDef.onlineSpawns.tdm) {
     let minEnemy = Infinity;
     for (const e of enemies) minEnemy = Math.min(minEnemy, Math.hypot(e.x - p.x, e.z - p.z));
     let crowded = false;

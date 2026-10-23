@@ -2,14 +2,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getArenaCollision } from '../../shared/arena-collision.js';
-import { ONLINE_SPAWNS, BOT_SPAWNS, SITES, BOUNDS, OFFLINE_SPAWN } from '../../shared/arena-layout.js';
+import { ONLINE_SPAWNS, BOT_SPAWNS, SITES, BOUNDS, OFFLINE_SPAWN, MAP_DEFS, siteAt } from '../../shared/arena-layout.js';
 import { createMoveState, createCommand, stepMovement, copyMoveState } from '../../shared/movement.js';
 import { GAME } from '../../shared/game-config.js';
 import { computeSmokePlacement } from '../../shared/smoke-rules.js';
 import { rayVsPlayer } from '../../shared/hitboxes.js';
 import { computeSpread, damageFor, weaponBySlot } from '../../shared/weapon-rules.js';
 import { sanitizeName, isValidRoomCode, normalizeRoomCode } from '../../shared/protocol.js';
-import { sanitizeInput, validateJoinOptions } from '../src/services/validation.js';
+import { sanitizeInput, validateJoinOptions, validateCreateOptions } from '../src/services/validation.js';
+import { PROTOCOL_VERSION } from '../../shared/protocol.js';
 
 const arena = getArenaCollision();
 const DT = 1 / GAME.net.tickRate;
@@ -44,6 +45,58 @@ test('arena: todos os pontos de surgimento são válidos (no piso, fora de sóli
     const max = { x: p.x + P.radius, y: y + P.height, z: p.z + P.radius };
     assert.equal(arena.overlapsSolid(min, max), false, `ponto dentro de sólido: ${p.x},${p.z}`);
   }
+});
+
+/** Conectividade no piso: busca em largura numa grade de 0,5 m a partir do surgimento dos defensores. */
+function reachable(a, def) {
+  const cell = 0.5, b = def.bounds, R = P.radius;
+  const nx = Math.ceil((b.maxX - b.minX) / cell), nz = Math.ceil((b.maxZ - b.minZ) / cell);
+  const free = (i, k) => {
+    const x = b.minX + (i + 0.5) * cell, z = b.minZ + (k + 0.5) * cell;
+    if (!a.inBounds(x, z, R)) return false;
+    return !a.overlapsSolid({ x: x - R, y: 0.05, z: z - R }, { x: x + R, y: P.height, z: z + R });
+  };
+  const seen = new Uint8Array(nx * nz);
+  const toCell = (x, z) => [Math.floor((x - b.minX) / cell), Math.floor((z - b.minZ) / cell)];
+  const [si, sk] = toCell(def.onlineSpawns[1][0].x, def.onlineSpawns[1][0].z);
+  const queue = [[si, sk]];
+  seen[si * nz + sk] = 1;
+  while (queue.length) {
+    const [i, k] = queue.pop();
+    for (const [di, dk] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const a2 = i + di, b2 = k + dk;
+      if (a2 < 0 || b2 < 0 || a2 >= nx || b2 >= nz || seen[a2 * nz + b2] || !free(a2, b2)) continue;
+      seen[a2 * nz + b2] = 1;
+      queue.push([a2, b2]);
+    }
+  }
+  return (x, z) => { const [i, k] = toCell(x, z); return seen[i * nz + k] === 1; };
+}
+
+test('mapas: Foundry-7 e Porto Vesper — surgimentos válidos, objetivos e munição acessíveis a pé', () => {
+  for (const def of Object.values(MAP_DEFS)) {
+    const a = getArenaCollision(def.id);
+    const spawns = [...def.onlineSpawns.tdm, ...def.onlineSpawns[1], ...def.onlineSpawns[2]];
+    assert.ok(def.onlineSpawns.tdm.length >= 12, `${def.id}: pontos de TDM suficientes`);
+    for (const p of spawns) {
+      const y = a.groundHeight(p.x, p.z, 3, P.radius);
+      assert.ok(a.inBounds(p.x, p.z, P.radius), `${def.id}: fora dos limites ${p.x},${p.z}`);
+      assert.equal(a.overlapsSolid({ x: p.x - P.radius, y: y + 0.01, z: p.z - P.radius }, { x: p.x + P.radius, y: y + P.height, z: p.z + P.radius }), false, `${def.id}: surgimento dentro de sólido ${p.x},${p.z}`);
+    }
+    const ok = reachable(a, def);
+    for (const p of spawns) assert.ok(ok(p.x, p.z), `${def.id}: surgimento isolado ${p.x},${p.z}`);
+    for (const s of Object.values(def.sites)) {
+      assert.ok(ok(s.cx, s.cz) || ok(s.cx + 1, s.cz) || ok(s.cx, s.cz + 1.5), `${def.id}: objetivo ${s.id} inacessível`);
+      assert.equal(siteAt(s.cx, s.cz, def.id), s.id);
+    }
+    for (const st of def.ammoStations) {
+      const near = [[1.4, 0], [-1.4, 0], [0, 1.2], [0, -1.2]].some(([dx, dz]) => ok(st.x + dx, st.z + dz));
+      assert.ok(near, `${def.id}: estação de munição inacessível em ${st.x},${st.z}`);
+    }
+  }
+  // os dois mapas têm geometria própria
+  assert.notEqual(getArenaCollision('vesper').colliders.length, 0);
+  assert.notEqual(getArenaCollision('vesper'), getArenaCollision('foundry7'));
 });
 
 test('arena: objetivos A/B ficam dentro da arena e o centro é acessível', () => {
@@ -138,7 +191,17 @@ test('validação: nomes, códigos de sala e opções de entrada', () => {
   assert.equal(sanitizeName('x'.repeat(30)), null);
   assert.equal(isValidRoomCode(normalizeRoomCode(' ab-cd2 ')), true);
   assert.equal(isValidRoomCode('ABC0O'), false);
-  assert.throws(() => validateJoinOptions({ name: 'Ana', clientKey: 'abcdefgh12', protocol: 1 }), /incompatível/);
-  assert.throws(() => validateJoinOptions({ name: '', clientKey: 'abcdefgh12', protocol: 2 }), /Nome inválido/);
-  assert.deepEqual(validateJoinOptions({ name: 'Ana', clientKey: 'abcdefgh12', protocol: 2 }), { name: 'Ana', clientKey: 'abcdefgh12' });
+  const P = PROTOCOL_VERSION;
+  assert.throws(() => validateJoinOptions({ name: 'Ana', clientKey: 'abcdefgh12', protocol: P - 1 }), /incompatível/);
+  assert.throws(() => validateJoinOptions({ name: '', clientKey: 'abcdefgh12', protocol: P }), /Nome inválido/);
+  // operador e arma primária: ausentes viram o padrão; desconhecidos são recusados
+  assert.deepEqual(validateJoinOptions({ name: 'Ana', clientKey: 'abcdefgh12', protocol: P }), { name: 'Ana', clientKey: 'abcdefgh12', operator: 'gaviao', primary: 'rifle' });
+  assert.deepEqual(validateJoinOptions({ name: 'Ana', clientKey: 'abcdefgh12', protocol: P, operator: 'lince', primary: 'smg' }), { name: 'Ana', clientKey: 'abcdefgh12', operator: 'lince', primary: 'smg' });
+  assert.throws(() => validateJoinOptions({ name: 'Ana', clientKey: 'abcdefgh12', protocol: P, operator: 'robo-x' }), /Operador desconhecido/);
+  assert.throws(() => validateJoinOptions({ name: 'Ana', clientKey: 'abcdefgh12', protocol: P, primary: 'railgun' }), /Arma primária/);
+  assert.throws(() => validateJoinOptions({ name: 'Ana', clientKey: 'abcdefgh12', protocol: P, primary: 'pistol' }), /Arma primária/);
+  // mapas: válidos por modo, desconhecidos recusados
+  assert.equal(validateCreateOptions({ mode: 'tdm', map: 'vesper' }, 10).map, 'vesper');
+  assert.equal(validateCreateOptions({ mode: 'tactical' }, 10).map, 'foundry7');
+  assert.throws(() => validateCreateOptions({ mode: 'tdm', map: '../../etc' }, 10), /Mapa desconhecido/);
 });

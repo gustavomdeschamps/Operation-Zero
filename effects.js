@@ -66,6 +66,11 @@ class ParticlePool {
   }
 
   emit(px, py, pz, vx, vy, vz, { color, life, size, sizeEnd, alpha = 1, gravity = 0, drag = 0 }) {
+    // qualidade de efeitos: descarta parte das partículas de forma determinística (sem Math.random)
+    if (this.density < 1) {
+      this.skipAcc = (this.skipAcc || 0) + (1 - this.density);
+      if (this.skipAcc >= 1) { this.skipAcc -= 1; return; }
+    }
     const i = this.cursor;
     this.cursor = (this.cursor + 1) % this.max;
     const i3 = i * 3;
@@ -206,6 +211,14 @@ export class Effects {
     };
   }
 
+  /** level: 'low' | 'medium' | 'high' · reduce: atenua clarões e partículas (acessibilidade). */
+  setQuality(level, reduce = false) {
+    const density = ({ low: 0.35, medium: 0.65, high: 1 }[level] ?? 1) * (reduce ? 0.5 : 1);
+    this.glow.density = density;
+    this.dust.density = density;
+    this.flashScale = reduce ? 0.35 : 1;
+  }
+
   setViewport(heightPx, fovDeg) {
     const scale = heightPx / (2 * Math.tan((fovDeg * Math.PI) / 360));
     this.glow.material.uniforms.uScale.value = scale;
@@ -325,12 +338,12 @@ export class Effects {
 
   muzzleFlash(position) {
     this.muzzleLight.position.copy(position);
-    this.muzzleLight.intensity = 16;
+    this.muzzleLight.intensity = 16 * (this.flashScale ?? 1);
   }
 
   enemyMuzzleFlash(position) {
     this.enemyFlashLight.position.copy(position);
-    this.enemyFlashLight.intensity = 10;
+    this.enemyFlashLight.intensity = 10 * (this.flashScale ?? 1);
     for (let i = 0; i < 5; i++) {
       this.glow.emit(position.x, position.y, position.z, (this.rng() - 0.5) * 2, (this.rng() - 0.5) * 2, (this.rng() - 0.5) * 2,
         { color: this.colors.sparkHot, life: 0.06, size: 0.12, sizeEnd: 0.02 });

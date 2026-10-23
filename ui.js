@@ -1,7 +1,9 @@
-// Interface: HUD, menus, configurações e feedback de combate.
+// Interface: HUD, telas e feedback de combate.
 // Os elementos são consultados uma única vez e só são atualizados quando o valor muda.
+// A mira é desenhada por crosshair.js — a mesma função usada pela prévia das configurações.
 import { CONFIG } from './config.js';
 import { formatTime, clamp } from './utils.js';
+import { CrosshairView } from './crosshair.js';
 
 const STATE_LABELS = {
   idle: 'PARADO', walk: 'ANDANDO', run: 'CORRENDO', air: 'NO AR', crouch: 'AGACHADO', 'crouch-move': 'AGACHADO',
@@ -26,8 +28,10 @@ export class UI {
       loadingText: $('loading-text'), loadingBar: $('loading-bar'),
       errorText: $('error-text'),
       endTitle: $('end-title'), endSubtitle: $('end-subtitle'), endStats: $('end-stats'), endBadge: $('end-badge'),
-      settingsForm: $('settings-form'),
+      weaponPanel: document.querySelector('.weapon-panel'), toast: $('toast'),
     };
+    this.crosshair = new CrosshairView(this.el.crosshair, 160);
+    this.toastTimer = 0;
     this.screens = {};
     document.querySelectorAll('.screen').forEach((s) => { this.screens[s.dataset.screen] = s; });
     this.cache = {};
@@ -126,7 +130,13 @@ export class UI {
   setAmmo({ mag, reserve, magSize, name, slot }) {
     this._set('mag', this.el.mag, String(mag));
     this._set('reserve', this.el.reserve, String(reserve));
-    this._set('weapon', this.el.weapon, name);
+    this._set('weapon', this.el.weapon, name, (e, v) => {
+      e.textContent = v;
+      const panel = this.el.weaponPanel;
+      panel.classList.remove('swap');
+      void panel.offsetWidth;          // reinicia a animação de troca
+      panel.classList.add('swap');
+    });
     this._set('lowAmmo', this.el.ammoBlock, mag <= Math.ceil(magSize * 0.25), (e, low) => e.classList.toggle('low', low));
     this._set('slot', this.el.slots, slot, (els, s) => els.forEach((e) => e.classList.toggle('active', Number(e.dataset.slot) === s)));
   }
@@ -145,15 +155,41 @@ export class UI {
     this._set('abilityTimer', this.el.abilityTimer, label);
   }
 
-  /** gapPx = raio do cone de dispersão projetado na tela. */
-  setCrosshairGap(gapPx) {
-    const g = Math.round(clamp(gapPx, 3, 90) * 2) / 2;
-    this._set('gap', this.el.crosshair, g, (e, v) => e.style.setProperty('--gap', `${v}px`));
+  /** Configuração da retícula (já normalizada por settings.js). */
+  setCrosshairConfig(cfg) { this.crosshairCfg = cfg; this.crosshair.setConfig(cfg); }
+
+  /** spreadPx = abertura dinâmica (px de tela) vinda da dispersão real da arma. */
+  setCrosshairSpread(spreadPx) {
+    const scale = this.crosshairCfg ? this.crosshairCfg.scale : 1;
+    this.crosshair.setSpread(clamp(spreadPx, 0, 90) / scale);
+    this.crosshair.render();
   }
 
-  setCrosshairColor(color) { document.documentElement.style.setProperty('--crosshair', color); }
+  setCrosshairVisible(v) { this.crosshair.setVisible(v); }
 
-  setCrosshairVisible(v) { this._set('xhVisible', this.el.crosshair, v, (e, vis) => e.classList.toggle('hidden', !vis)); }
+  /** Luneta do fuzil de precisão (sobreposição em tela cheia). */
+  setScope(on) {
+    if (this._scope === on) return;
+    this._scope = on;
+    (this._scopeEl || (this._scopeEl = document.getElementById('scope'))).classList.toggle('hidden', !on);
+  }
+
+  /** Feedback de habilidade indisponível (cartão treme). */
+  abilityDenied() {
+    const e = this.el.abilityCard;
+    e.classList.remove('denied');
+    void e.offsetWidth;
+    e.classList.add('denied');
+  }
+
+  /** Aviso curto na parte de baixo da tela (menus e HUD). kind: '' | 'warn' | 'error'. */
+  toast(text, kind = '', seconds = 2.6) {
+    const e = this.el.toast;
+    e.textContent = text;
+    e.className = `visible ${kind}`;
+    clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => e.classList.remove('visible'), seconds * 1000);
+  }
 
   hitmarker(kind) {
     const e = this.el.hitmarker;
@@ -234,38 +270,5 @@ export class UI {
     this.el.hitmarker.classList.remove('show', 'head', 'kill');
     this.setSmoke(0);
     this.cache = {};
-  }
-
-  // ---- configurações ---------------------------------------------------------
-  fillSettings(s) {
-    const f = this.el.settingsForm;
-    f.sensitivity.value = s.sensitivity;
-    f.fov.value = s.fov;
-    f.volume.value = Math.round(s.volume * 100);
-    f.quality.value = s.quality;
-    f.botsFireBack.checked = s.botsFireBack;
-    f.showFps.checked = s.showFps;
-    f.crosshairColor.value = s.crosshairColor;
-    this.refreshSettingLabels();
-  }
-
-  readSettings() {
-    const f = this.el.settingsForm;
-    return {
-      sensitivity: clamp(parseFloat(f.sensitivity.value) || 1, 0.1, 4),
-      fov: clamp(parseInt(f.fov.value, 10) || 78, 70, 100),
-      volume: clamp((parseInt(f.volume.value, 10) || 0) / 100, 0, 1),
-      quality: CONFIG.graphics.presets[f.quality.value] ? f.quality.value : CONFIG.graphics.defaultQuality,
-      botsFireBack: f.botsFireBack.checked,
-      showFps: f.showFps.checked,
-      crosshairColor: f.crosshairColor.value,
-    };
-  }
-
-  refreshSettingLabels() {
-    const f = this.el.settingsForm;
-    f.querySelector('[data-out="sensitivity"]').textContent = Number(f.sensitivity.value).toFixed(2);
-    f.querySelector('[data-out="fov"]').textContent = `${f.fov.value}°`;
-    f.querySelector('[data-out="volume"]').textContent = `${f.volume.value}%`;
   }
 }

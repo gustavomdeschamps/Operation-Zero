@@ -4,10 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Operation Zero</title>
-  <meta name="description" content="OPERATION ZERO — FPS tático de treinamento no navegador (Three.js)." />
+  <meta name="description" content="OPERATION ZERO — FPS tático 3D no navegador, com treino offline e partidas online por equipes." />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="stylesheet" href="style.css" />
   <script type="importmap">
-    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+    { "imports": { "three": "./vendor/three/three.module.min.js", "three/addons/": "./vendor/three/addons/" } }
   </script>
 </head>
 <body>
@@ -19,15 +20,15 @@
     <div id="damage-vignette"></div>
     <div id="damage-indicators"></div>
 
-    <!-- HUD -->
+    <!-- ================================================================ HUD -->
     <div id="hud" class="hidden">
       <header class="hud-top">
         <div class="hud-arena">
-          <span class="label">ARENA</span>
+          <span class="label">MAPA</span>
           <strong id="hud-arena-name">FOUNDRY-7</strong>
           <span id="hud-zone" class="zone">STAGING</span>
         </div>
-        <div class="hud-score">
+        <div class="hud-score offline-only">
           <div class="score-block">
             <span class="label">ELIMINAÇÕES</span>
             <span class="score-value"><span id="hud-kills">00</span><small>/<span id="hud-target">30</span></small></span>
@@ -44,9 +45,11 @@
         </div>
       </header>
 
-      <div id="crosshair" aria-hidden="true">
-        <i class="xh top"></i><i class="xh bottom"></i><i class="xh left"></i><i class="xh right"></i><i class="xh-dot"></i>
-      </div>
+      <!-- minimapa (posição/escala/opacidade nas configurações) -->
+      <div id="minimap" class="minimap"><canvas id="minimap-canvas" width="200" height="200" aria-label="Minimapa"></canvas><span class="minimap-key" id="minimap-key">M</span></div>
+
+      <canvas id="crosshair" aria-hidden="true"></canvas>
+      <div id="scope" class="hidden" aria-hidden="true"><div class="scope-lens"><i class="sh"></i><i class="sv"></i><i class="sm"></i><b></b></div></div>
       <div id="hitmarker" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
       <div id="center-message"></div>
       <div id="killfeed"></div>
@@ -70,7 +73,7 @@
             <path d="M14 32c-4 0-7-3-7-7s3-7 7-7c1-5 5-8 10-8s9 3 10 8c4 0 7 3 7 7s-3 7-7 7z" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>
             <path d="M15 38h18M19 43h10" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
           </svg>
-          <span class="ability-key">E</span>
+          <span class="ability-key" id="ability-key">E</span>
           <span id="ability-timer" class="ability-timer"></span>
         </div>
         <div class="weapon-panel">
@@ -93,7 +96,7 @@
           <span class="team-score omega"><b id="net-score-2">0</b><small>ÔMEGA</small></span>
         </div>
       </div>
-      <div id="net-status" class="hidden"><i class="dot"></i><span id="net-ping">-- ms</span><span id="net-team-tag" class="team-tag">ALFA</span></div>
+      <div id="net-status" class="hidden"><i class="dot"></i><span id="net-ping">-- ms</span><span id="net-team-tag" class="team-tag">ALFA</span><span id="net-kd" class="net-kd"></span></div>
       <div id="objective-bar" class="hidden"><span id="objective-label">INSTALANDO</span><div class="bar"><div id="objective-fill"></div></div></div>
       <div id="death-overlay" class="hidden"><strong>ELIMINADO</strong><span id="death-detail"></span></div>
       <div id="round-banner" class="hidden"><strong id="round-banner-title"></strong><span id="round-banner-text"></span></div>
@@ -104,217 +107,451 @@
       <div id="fps-counter" class="hidden">-- FPS</div>
     </div>
 
-    <!-- tela de carregamento -->
+    <!-- mapa tático ampliado (tecla M) -->
+    <div id="bigmap" class="hidden" role="dialog" aria-label="Mapa tático">
+      <div class="bigmap-panel">
+        <header><div><span class="label">MAPA TÁTICO</span><strong id="bigmap-title">FOUNDRY-7</strong></div>
+          <div class="bigmap-actions"><button class="btn small" type="button" data-action="bigmap-zoom">ZOOM <span id="bigmap-zoom-label">1×</span></button><button class="btn small ghost" type="button" data-action="bigmap-close">FECHAR <kbd id="bigmap-key">M</kbd></button></div></header>
+        <canvas id="bigmap-canvas" width="900" height="900"></canvas>
+        <footer class="bigmap-legend"><span><i class="lg self"></i>Você</span><span><i class="lg ally"></i>Aliados</span><span><i class="lg site"></i>Objetivos</span><span><i class="lg ammo"></i>Munição</span><span class="muted">Inimigos não são exibidos: o mapa nunca revela posições fora da sua visão.</span></footer>
+      </div>
+    </div>
+
+    <!-- ========================================================== CARREGAMENTO -->
     <section class="screen visible" data-screen="loading">
       <div class="loading-box">
-        <div class="brand small"><span class="brand-op">OPERATION</span><span class="brand-zero">ZERO</span></div>
+        <img class="loading-logo" src="assets/branding/logo-stacked.svg" alt="OPERATION ZERO" width="260" height="210" />
         <div class="loading-track"><div id="loading-bar"></div></div>
         <p id="loading-text">Carregando módulos…</p>
       </div>
     </section>
 
-    <!-- menu principal -->
-    <section class="screen" data-screen="menu">
-      <div class="menu-shade"></div>
-      <div class="menu-layout">
-        <div class="menu-main">
-          <p class="eyebrow">OPERATION ZERO 2.0 · FPS TÁTICO MULTIPLAYER</p>
-          <h1 class="brand"><span class="brand-op">OPERATION</span><span class="brand-zero">ZERO</span></h1>
-          <p class="tagline">Instalação industrial abandonada. Alvos hostis ativos. Precisão, recuo e posicionamento decidem a sessão.</p>
-          <div class="menu-actions">
-            <button class="btn primary" data-action="online">JOGAR ONLINE</button>
-            <button class="btn" data-action="play">TREINO OFFLINE</button>
-            <button class="btn" data-action="settings">CONFIGURAÇÕES</button>
-            <button class="btn ghost menu-controls-btn" data-action="controls">CONTROLES</button>
-          </div>
-          <p class="menu-note" id="menu-note">Online: combate por equipes ou modo tático de ataque e defesa. Offline: elimine 30 alvos na Foundry-7.</p>
-        </div>
-        <aside class="controls-card" aria-label="Controles">
-          <h2>CONTROLES</h2>
-          <dl>
-            <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt><dd>Mover</dd>
-            <dt><kbd>Mouse</kbd></dt><dd>Olhar</dd>
-            <dt><kbd>LMB</kbd></dt><dd>Disparar</dd>
-            <dt><kbd>RMB</kbd></dt><dd>Mirar</dd>
-            <dt><kbd>Shift</kbd></dt><dd>Caminhar (silencioso)</dd>
-            <dt><kbd>C</kbd> / <kbd>Ctrl</kbd></dt><dd>Agachar</dd>
-            <dt><kbd>Espaço</kbd></dt><dd>Pular</dd>
-            <dt><kbd>R</kbd></dt><dd>Recarregar</dd>
-            <dt><kbd>E</kbd></dt><dd>Névoa Ciano</dd>
-            <dt><kbd>F</kbd></dt><dd>Instalar / desarmar (tático)</dd>
-            <dt><kbd>Tab</kbd></dt><dd>Placar (online)</dd>
-            <dt><kbd>1</kbd> <kbd>2</kbd></dt><dd>Fuzil / Pistola</dd>
-            <dt><kbd>Esc</kbd></dt><dd>Pausar</dd>
-          </dl>
-        </aside>
+    <!-- =============================================================== ABERTURA -->
+    <section class="screen intro" data-screen="intro" aria-label="Abertura">
+      <div class="letterbox top"></div><div class="letterbox bottom"></div>
+      <div class="intro-stage" id="intro-stage">
+        <svg class="intro-symbol" viewBox="0 0 64 64" aria-hidden="true">
+          <g class="ring">
+            <path d="M20 4 H28 V10 H22.5 L10 22.5 V28 H4 V20 Z"/>
+            <path d="M36 4 H44 L60 20 V28 H54 V22.5 L41.5 10 H36 Z"/>
+            <path d="M60 36 V44 L44 60 H36 V54 H41.5 L54 41.5 V36 Z"/>
+            <path d="M28 60 H20 L4 44 V36 H10 V41.5 L22.5 54 H28 Z"/>
+          </g>
+          <path class="zed" d="M19 19 H45 V25 L28.5 39 H45 V45 H19 V39 L35.5 25 H19 Z"/>
+          <rect class="tick" x="30.5" y="0" width="3" height="7"/>
+          <rect class="tick" x="30.5" y="57" width="3" height="7"/>
+        </svg>
+        <img class="intro-wordmark" src="assets/branding/logo-horizontal-light.svg" alt="OPERATION ZERO" />
+        <p class="intro-caption" id="intro-caption"></p>
       </div>
-      <footer class="menu-footer"><span>v2.0 · Three.js r160 · Colyseus 0.18</span><span>Sem conta: escolha um nome e jogue</span></footer>
+      <div class="intro-bottom">
+        <div class="intro-load"><div class="intro-load-track"><i id="intro-load-bar"></i></div><span id="intro-load-text">Preparando recursos…</span></div>
+      </div>
     </section>
 
-    <!-- pausa -->
+    <!-- =========================================================== MENU PRINCIPAL -->
+    <section class="screen menu-screen" data-screen="menu">
+      <div class="menu-veil"></div>
+      <header class="topbar">
+        <img class="topbar-logo" src="assets/branding/logo-horizontal-light.svg" alt="OPERATION ZERO" width="168" height="40" />
+        <nav class="mainnav" aria-label="Navegação principal">
+          <button type="button" data-nav="home" class="active">INÍCIO</button>
+          <button type="button" data-nav="play">JOGAR</button>
+          <button type="button" data-nav="operators">OPERADORES</button>
+          <button type="button" data-nav="arsenal">ARSENAL</button>
+          <button type="button" data-nav="maps">MAPAS</button>
+          <button type="button" data-nav="shop">LOJA</button>
+          <button type="button" data-action="settings">CONFIGURAÇÕES</button>
+        </nav>
+        <div class="topbar-right">
+          <button class="btn small primary lobby-return" type="button" data-action="menu-back-lobby">VOLTAR AO LOBBY <kbd>Esc</kbd></button>
+          <button class="profile-chip" type="button" data-nav="operators" title="Perfil local e operador">
+            <img id="profile-symbol" src="assets/branding/symbol.svg" alt="" width="28" height="28" />
+            <span><b id="profile-name">RECRUTA</b><small id="profile-loadout">GAVIÃO · VX-9 RANGER</small></span>
+          </button>
+          <button class="wallet-chip" type="button" data-nav="shop" id="wallet-chip" title="ZERO CREDITS — moeda virtual do jogo (sem valor em dinheiro)">
+            <i aria-hidden="true"></i><b id="wallet-credits">—</b><small>ZC</small>
+          </button>
+          <div class="server-chip" id="server-chip" title="Estado do servidor online"><i></i><span id="server-status">VERIFICANDO</span></div>
+          <button class="icon-btn" type="button" data-action="toggle-mute" id="btn-mute" aria-label="Silenciar o jogo" title="Silenciar">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path class="spk" d="M4 9h4l5-4v14l-5-4H4z"/><path class="wave" d="M16 8.5a4.5 4.5 0 0 1 0 7M18.5 6a8 8 0 0 1 0 12"/><path class="mute" d="M16 9l5 6M21 9l-5 6"/></svg>
+          </button>
+          <button class="icon-btn" type="button" data-action="toggle-fullscreen" aria-label="Alternar tela cheia" title="Tela cheia">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="panes">
+        <!-- INÍCIO -->
+        <section class="pane visible" data-pane="home">
+          <div class="home-hero">
+            <h1 class="home-title"><span>Cada rodada</span> começa do zero.</h1>
+            <p class="home-lead">FPS tático por equipes: precisão, posicionamento e fumaça na hora certa. Treine contra soldados hostis ou enfrente outros jogadores online.</p>
+            <div class="home-actions">
+              <button class="btn primary large" type="button" data-nav="play">JOGAR</button>
+              <button class="btn large" type="button" data-action="play">TREINAMENTO RÁPIDO</button>
+            </div>
+            <div class="home-operator">
+              <span class="label">EM CAMPO</span>
+              <strong id="home-op-name">GAVIÃO</strong><span id="home-op-role">ASSALTO</span>
+              <button class="link" type="button" data-nav="operators">TROCAR OPERADOR</button>
+            </div>
+          </div>
+          <aside class="home-side">
+            <article class="card news">
+              <header><span class="label">NOVIDADES</span><b>OPERAÇÃO EM CAMPO</b></header>
+              <ul>
+                <li><b>LR-12 Sentinela.</b> Fuzil de precisão por ferrolho com luneta 4x.</li>
+                <li><b>Partidas sempre cheias.</b> Vagas vazias são completadas por bots (sempre marcados como BOT).</li>
+                <li><b>ZERO CREDITS.</b> Termine partidas, ganhe créditos e abra caixas de acabamentos na LOJA.</li>
+                <li><b>Seis acabamentos.</b> Do Grafite tático ao Circuito experimental — só visuais.</li>
+              </ul>
+            </article>
+            <article class="card status">
+              <header><span class="label">SERVIÇO ONLINE</span><b id="home-server">VERIFICANDO…</b></header>
+              <p id="home-rooms" class="muted">Consultando partidas públicas…</p>
+            </article>
+          </aside>
+        </section>
+
+        <!-- JOGAR -->
+        <section class="pane" data-pane="play">
+          <div class="pane-head">
+            <div><h2 class="pane-title">JOGAR</h2></div>
+            <label class="field inline name-field"><span>Nome de exibição</span><input id="net-name" type="text" maxlength="16" autocomplete="off" spellcheck="false" placeholder="2 a 16 caracteres" /></label>
+          </div>
+          <div class="mode-grid">
+            <article class="mode-card" data-mode-card="training">
+              <header><span class="tag">SOLO · OFFLINE</span><h3>TREINAMENTO</h3></header>
+              <p>Neutralize 30 alvos hostis na Foundry-7. Os soldados reagem, avisam antes de atirar e revidam.</p>
+              <dl><dt>Jogadores</dt><dd>1</dd><dt>Mapa</dt><dd>Foundry-7</dd><dt>Duração</dt><dd>5–10 min</dd></dl>
+              <button class="btn primary" type="button" data-action="play">INICIAR</button>
+            </article>
+            <article class="mode-card" data-mode-card="tdm">
+              <header><span class="tag live">ONLINE · PÚBLICA</span><h3>MATA-MATA POR EQUIPES</h3></header>
+              <p>ALFA contra ÔMEGA com retorno imediato. Vence quem chegar a 30 eliminações ou estiver à frente no fim do tempo. Vagas livres são completadas com bots.</p>
+              <dl><dt>Jogadores</dt><dd>2–10</dd><dt>Mapa</dt><dd>Foundry-7 ou Porto Vesper</dd><dt>Duração</dt><dd>até 8 min</dd></dl>
+              <button class="btn primary" type="button" data-action="net-quick-tdm">BUSCAR PARTIDA</button>
+            </article>
+            <article class="mode-card" data-mode-card="tactical">
+              <header><span class="tag live">ONLINE · PÚBLICA</span><h3>TÁTICO CASUAL</h3></header>
+              <p>Rodadas sem retorno. Atacantes instalam o dispositivo em A ou B; defensores desarmam ou eliminam a equipe. Vagas livres são completadas com bots.</p>
+              <dl><dt>Jogadores</dt><dd>2–10</dd><dt>Mapa</dt><dd>Foundry-7 ou Porto Vesper</dd><dt>Duração</dt><dd>melhor de 9 (~15 min)</dd></dl>
+              <button class="btn primary" type="button" data-action="net-quick-tactical">BUSCAR PARTIDA</button>
+            </article>
+            <article class="mode-card custom" data-mode-card="custom">
+              <header><span class="tag">ONLINE · PRIVADA</span><h3>PARTIDA PERSONALIZADA</h3></header>
+              <div class="field"><span>Modo</span>
+                <div class="segmented" id="net-mode">
+                  <button type="button" data-mode="tdm" class="active">EQUIPES</button>
+                  <button type="button" data-mode="tactical">TÁTICO</button>
+                </div>
+              </div>
+              <div class="field"><span>Mapa</span>
+                <div class="segmented" id="net-map">
+                  <button type="button" data-map="foundry7" class="active">FOUNDRY-7</button>
+                  <button type="button" data-map="vesper">PORTO VESPER</button>
+                </div>
+              </div>
+              <div class="custom-actions">
+                <button class="btn primary" type="button" data-action="net-create">CRIAR SALA</button>
+                <div class="code-row"><input id="net-code" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="CÓDIGO" aria-label="Código da sala" /><button class="btn" type="button" data-action="net-join-code">ENTRAR</button></div>
+              </div>
+            </article>
+            <article class="mode-card disabled" aria-disabled="true">
+              <header><span class="tag soon">EM BREVE</span><h3>COMPETITIVO</h3></header>
+              <p>Partidas ranqueadas exigem contas e classificação, que ainda não existem. Este modo não está disponível.</p>
+              <button class="btn" type="button" disabled>INDISPONÍVEL</button>
+            </article>
+          </div>
+          <div class="play-foot">
+            <p class="net-message" id="net-message" role="status"></p>
+            <div class="room-list">
+              <header><span class="label">PARTIDAS PÚBLICAS</span><button class="link" type="button" data-action="net-refresh">ATUALIZAR</button></header>
+              <ul id="net-rooms"><li class="empty">Nenhuma partida pública no momento.</li></ul>
+              <p class="net-server" id="net-server">Servidor: aguardando…</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- OPERADORES -->
+        <section class="pane viewer-pane" data-pane="operators">
+          <div class="viewer-list">
+            <h2 class="pane-title">OPERADORES</h2>
+            <ul class="op-list" id="op-list"></ul>
+          </div>
+          <div class="viewer-tools">
+            <span class="viewer-hint" id="op-hint">Arraste para girar · roda do mouse para aproximar</span>
+            <div class="tool-row">
+              <button class="icon-btn" type="button" data-action="viewer-rotate-left" aria-label="Girar para a esquerda">⟲</button>
+              <button class="icon-btn" type="button" data-action="viewer-zoom-out" aria-label="Afastar">−</button>
+              <button class="icon-btn" type="button" data-action="viewer-zoom-in" aria-label="Aproximar">+</button>
+              <button class="icon-btn" type="button" data-action="viewer-rotate-right" aria-label="Girar para a direita">⟳</button>
+            </div>
+            <p class="viewer-status" id="op-status" role="status"></p>
+          </div>
+          <aside class="viewer-detail card" id="op-detail">
+            <h3 id="op-name">GAVIÃO</h3>
+            <span class="label" id="op-role">ASSALTO</span>
+            <p id="op-tagline"></p>
+            <span class="label">EQUIPAMENTO</span>
+            <ul id="op-kit" class="kit-list"></ul>
+            <span class="label">UNIFORME (PRÉVIA)</span>
+            <div class="segmented" id="op-team">
+              <button type="button" data-team="1" class="active">ALFA · GRAFITE</button>
+              <button type="button" data-team="2">ÔMEGA · OLIVA</button>
+            </div>
+            <p class="muted small">Em partidas online o uniforme é sempre o da sua equipe. A aparência não altera atributos.</p>
+            <button class="btn primary" type="button" data-action="operator-select" id="op-select">SELECIONAR OPERADOR</button>
+          </aside>
+        </section>
+
+        <!-- ARSENAL -->
+        <section class="pane viewer-pane" data-pane="arsenal">
+          <div class="viewer-list">
+            <h2 class="pane-title">ARSENAL</h2>
+            <div class="cat-tabs" id="arsenal-cats" role="tablist"></div>
+            <ul class="weapon-list" id="weapon-list"></ul>
+          </div>
+          <div class="viewer-tools">
+            <span class="viewer-hint">Arraste para girar · roda do mouse para aproximar</span>
+            <div class="tool-row">
+              <button class="icon-btn" type="button" data-action="viewer-rotate-left" aria-label="Girar para a esquerda">⟲</button>
+              <button class="icon-btn" type="button" data-action="viewer-zoom-out" aria-label="Afastar">−</button>
+              <button class="icon-btn" type="button" data-action="viewer-zoom-in" aria-label="Aproximar">+</button>
+              <button class="icon-btn" type="button" data-action="viewer-rotate-right" aria-label="Girar para a direita">⟳</button>
+              <button class="btn small" type="button" data-action="viewer-inspect">INSPECIONAR</button>
+            </div>
+          </div>
+          <aside class="viewer-detail card" id="weapon-detail">
+            <h3 id="wd-name">VX-9 RANGER</h3>
+            <span class="label" id="wd-cat">FUZIL DE ASSALTO</span>
+            <p id="wd-desc"></p>
+            <div class="stats" id="wd-stats"></div>
+            <p class="muted small" id="wd-compare"></p>
+            <button class="btn primary" type="button" data-action="weapon-equip" id="wd-equip">EQUIPAR</button>
+            <div class="skin-block" id="wd-skin-block">
+              <span class="label">ACABAMENTO</span>
+              <div class="skin-picker" id="wd-skins" role="group" aria-label="Acabamentos da arma"></div>
+              <p class="muted small" id="wd-skin-note">Acabamentos são apenas visuais. Obtenha novos na LOJA.</p>
+            </div>
+          </aside>
+        </section>
+
+        <!-- LOJA -->
+        <section class="pane shop-pane" data-pane="shop">
+          <div class="pane-head">
+            <div>
+              <h2 class="pane-title">LOJA</h2>
+              <p class="muted small shop-lead">Caixas compradas só com ZERO CREDITS, a moeda do jogo — sem dinheiro real, sem trocas entre jogadores. Acabamentos não alteram dano, cadência, precisão nem hitboxes.</p>
+            </div>
+            <div class="wallet-big">
+              <div><span class="label">SALDO</span><strong id="shop-credits">—</strong><small>ZERO CREDITS</small></div>
+              <div><span class="label">FRAGMENTOS</span><strong id="shop-fragments">—</strong><small>DE REPETIDOS</small></div>
+              <div><span class="label">HOJE</span><strong id="shop-daily">—</strong><small id="shop-daily-cap">LIMITE DIÁRIO</small></div>
+            </div>
+          </div>
+          <p class="shop-status" id="shop-status" role="status"></p>
+          <div class="case-grid" id="case-grid"></div>
+          <div class="shop-lower">
+            <section class="card inventory">
+              <header><span class="label">INVENTÁRIO</span><b id="inv-count">0</b></header>
+              <div class="inv-grid" id="inv-grid"></div>
+            </section>
+            <section class="card history">
+              <header><span class="label">ÚLTIMAS TRANSAÇÕES</span></header>
+              <ul class="tx-list" id="tx-list"></ul>
+            </section>
+          </div>
+        </section>
+
+        <!-- MAPAS -->
+        <section class="pane" data-pane="maps">
+          <div class="pane-head"><div><h2 class="pane-title">MAPAS</h2></div></div>
+          <div class="map-grid" id="map-grid"></div>
+        </section>
+      </main>
+      <footer class="menu-footer"><button class="link" type="button" data-action="controls">CONTROLES</button><button class="link" type="button" data-action="credits">CRÉDITOS</button></footer>
+    </section>
+
+    <!-- ================================================================ PAUSA -->
     <section class="screen" data-screen="pause">
       <div class="panel">
-        <p class="eyebrow">SESSÃO SUSPENSA</p>
         <h2 class="panel-title">PAUSADO</h2>
         <div class="panel-actions">
-          <button class="btn primary" data-action="resume">RETOMAR</button>
-          <button class="btn offline-only" data-action="restart">REINICIAR SESSÃO</button>
-          <button class="btn" data-action="settings">CONFIGURAÇÕES</button>
-          <button class="btn ghost offline-only" data-action="quit">SAIR PARA O MENU</button>
-          <button class="btn ghost online-only" data-action="net-leave">SAIR DA PARTIDA</button>
+          <button class="btn primary" type="button" data-action="resume">RETOMAR</button>
+          <button class="btn offline-only" type="button" data-action="restart">REINICIAR TREINAMENTO</button>
+          <button class="btn" type="button" data-action="settings">CONFIGURAÇÕES</button>
+          <button class="btn" type="button" data-action="bigmap-open">MAPA TÁTICO</button>
+          <button class="btn ghost offline-only" type="button" data-action="quit">SAIR PARA O MENU</button>
+          <button class="btn ghost online-only" type="button" data-action="net-leave">SAIR DA PARTIDA</button>
         </div>
         <p class="panel-hint" id="pause-hint">O combate, os bots e os temporizadores estão congelados.</p>
       </div>
     </section>
 
-    <!-- configurações -->
-    <section class="screen" data-screen="settings">
-      <form class="panel settings" id="settings-form" autocomplete="off">
-        <p class="eyebrow">AJUSTES</p>
-        <h2 class="panel-title">CONFIGURAÇÕES</h2>
-        <label class="field"><span>Sensibilidade do mouse</span>
-          <input type="range" name="sensitivity" min="0.1" max="4" step="0.05" /><output data-out="sensitivity"></output></label>
-        <label class="field"><span>Campo de visão (FOV vertical)</span>
-          <input type="range" name="fov" min="70" max="100" step="1" /><output data-out="fov"></output></label>
-        <label class="field"><span>Volume</span>
-          <input type="range" name="volume" min="0" max="100" step="1" /><output data-out="volume"></output></label>
-        <label class="field"><span>Qualidade gráfica</span>
-          <select name="quality">
-            <option value="low">Baixa — sem sombras, resolução 1×</option>
-            <option value="medium">Média — sombras 2048</option>
-            <option value="high">Alta — sombras 4096, alta densidade</option>
-          </select></label>
-        <label class="field"><span>Cor da mira</span>
-          <select name="crosshairColor">
-            <option value="#3ef0ff">Ciano</option>
-            <option value="#7dff6a">Verde</option>
-            <option value="#ffe14a">Amarelo</option>
-            <option value="#ffffff">Branco</option>
-            <option value="#ff5cf0">Magenta</option>
-          </select></label>
-        <label class="field check"><input type="checkbox" name="botsFireBack" /><span>Bots revidam (dano ao jogador)</span></label>
-        <label class="field check"><input type="checkbox" name="showFps" /><span>Mostrar FPS medido</span></label>
-        <div class="panel-actions row">
-          <button class="btn primary" type="button" data-action="settings-back">VOLTAR</button>
-          <button class="btn ghost" type="button" data-action="settings-reset">RESTAURAR PADRÃO</button>
-        </div>
-      </form>
+    <!-- ========================================================= CONFIGURAÇÕES -->
+    <section class="screen settings-screen" data-screen="settings">
+      <div class="settings-shell">
+        <header class="settings-head">
+          <div><h2 class="panel-title">CONFIGURAÇÕES</h2></div>
+          <nav class="settings-tabs" id="settings-tabs" role="tablist" aria-label="Categorias">
+            <button type="button" data-tab="controls" class="active">CONTROLES</button>
+            <button type="button" data-tab="video">VÍDEO</button>
+            <button type="button" data-tab="audio">ÁUDIO</button>
+            <button type="button" data-tab="crosshair">MIRA</button>
+            <button type="button" data-tab="interface">INTERFACE</button>
+            <button type="button" data-tab="game">JOGO</button>
+          </nav>
+        </header>
+        <form class="settings-body" id="settings-form" autocomplete="off"></form>
+        <footer class="settings-foot">
+          <span class="muted small" id="settings-saved">As alterações são aplicadas e salvas na hora.</span>
+          <div class="panel-actions row">
+            <button class="btn ghost" type="button" data-action="settings-reset">RESTAURAR PADRÃO DA ABA</button>
+            <button class="btn primary" type="button" data-action="settings-back">VOLTAR</button>
+          </div>
+        </footer>
+      </div>
     </section>
 
-    <!-- fim de sessão -->
+    <!-- ========================================================= FIM DO TREINO -->
     <section class="screen" data-screen="end">
       <div class="panel end">
-        <span id="end-badge" class="end-badge win">CONCLUÍDO</span>
         <h2 class="panel-title" id="end-title">TREINAMENTO CONCLUÍDO</h2>
+        <span id="end-badge" class="end-badge win">CONCLUÍDO</span>
         <p class="panel-hint" id="end-subtitle"></p>
         <div id="end-stats" class="end-stats"></div>
         <div class="panel-actions row">
-          <button class="btn primary" data-action="restart">JOGAR NOVAMENTE</button>
-          <button class="btn ghost" data-action="quit">MENU PRINCIPAL</button>
+          <button class="btn primary" type="button" data-action="restart">JOGAR NOVAMENTE</button>
+          <button class="btn ghost" type="button" data-action="quit">MENU PRINCIPAL</button>
         </div>
       </div>
     </section>
 
-    <!-- erro de inicialização -->
+    <!-- ================================================================== ERRO -->
     <section class="screen" data-screen="error">
       <div class="panel error">
-        <p class="eyebrow">FALHA DE INICIALIZAÇÃO</p>
         <h2 class="panel-title">NÃO FOI POSSÍVEL INICIAR</h2>
         <p id="error-text" class="panel-hint"></p>
         <ul class="error-tips">
-          <li>Execute por um servidor HTTP local (ex.: <code>python -m http.server 8000</code>), não abrindo o arquivo diretamente.</li>
-          <li>O Three.js é carregado do CDN jsDelivr: é necessária conexão com a internet no primeiro acesso.</li>
+          <li>Execute por um servidor HTTP (<code>npm start</code> ou <code>python -m http.server 8080</code>), não abrindo o arquivo diretamente.</li>
           <li>Use um navegador atualizado com WebGL habilitado (Chrome, Edge ou Firefox).</li>
         </ul>
-        <div class="panel-actions row"><button class="btn primary" onclick="location.reload()">TENTAR NOVAMENTE</button></div>
+        <div class="panel-actions row"><button class="btn primary" type="button" onclick="location.reload()">TENTAR NOVAMENTE</button></div>
       </div>
     </section>
 
-    <!-- multiplayer: menu online -->
-    <section class="screen" data-screen="online">
-      <div class="menu-shade"></div>
-      <div class="online-layout">
-        <div class="panel online-main">
-          <p class="eyebrow">OPERATION ZERO 2.0 · MULTIPLAYER</p>
-          <h2 class="panel-title">JOGAR ONLINE</h2>
-          <label class="field"><span>Nome de exibição</span><input id="net-name" type="text" maxlength="16" autocomplete="off" spellcheck="false" placeholder="2 a 16 caracteres" /></label>
-          <div class="field"><span>Modo de jogo</span>
-            <div class="segmented" id="net-mode">
-              <button type="button" data-mode="tdm" class="active">COMBATE POR EQUIPES</button>
-              <button type="button" data-mode="tactical">TÁTICO · ATAQUE E DEFESA</button>
-            </div>
-          </div>
-          <div class="panel-actions">
-            <button class="btn primary" data-action="net-quick">BUSCAR PARTIDA PÚBLICA</button>
-            <button class="btn" data-action="net-create">CRIAR SALA PRIVADA</button>
-            <div class="code-row"><input id="net-code" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="CÓDIGO" /><button class="btn" data-action="net-join-code">ENTRAR COM CÓDIGO</button></div>
-            <button class="btn ghost" data-action="net-back">VOLTAR</button>
-          </div>
-          <p class="net-message" id="net-message" role="status"></p>
-          <p class="net-server" id="net-server">Servidor: aguardando…</p>
-        </div>
-        <aside class="panel room-list" aria-label="Partidas públicas">
-          <header><span>PARTIDAS PÚBLICAS</span><button class="link" type="button" data-action="net-refresh">ATUALIZAR</button></header>
-          <ul id="net-rooms"><li class="empty">Nenhuma partida pública no momento.</li></ul>
-        </aside>
-      </div>
-    </section>
-
-    <!-- multiplayer: busca -->
+    <!-- ======================================================= ONLINE: BUSCA -->
     <section class="screen" data-screen="searching">
       <div class="panel searching">
         <div class="spinner" aria-hidden="true"></div>
         <h2 class="panel-title" id="search-title">PROCURANDO PARTIDA</h2>
         <p class="panel-hint" id="search-text">Conectando ao servidor…</p>
-        <div class="panel-actions row"><button class="btn ghost" data-action="net-cancel">CANCELAR</button></div>
+        <div class="panel-actions row"><button class="btn ghost" type="button" data-action="net-cancel">CANCELAR</button></div>
       </div>
     </section>
 
-    <!-- multiplayer: lobby da sala -->
+    <!-- ======================================================= ONLINE: LOBBY -->
     <section class="screen" data-screen="lobby">
-      <div class="menu-shade"></div>
+      <div class="menu-veil"></div>
       <div class="panel lobby">
-        <p class="eyebrow" id="lobby-mode">COMBATE POR EQUIPES</p>
         <h2 class="panel-title" id="lobby-name">SALA</h2>
+        <p class="lobby-mode" id="lobby-mode">COMBATE POR EQUIPES</p>
         <div class="lobby-meta">
           <div class="code-box"><span class="label">CÓDIGO DA SALA</span><strong id="lobby-code">-----</strong><button class="link" type="button" data-action="net-copy-code">COPIAR</button></div>
+          <div><span class="label">MAPA</span><strong id="lobby-map">FOUNDRY-7</strong></div>
           <div><span class="label">JOGADORES</span><strong id="lobby-count">0/0</strong></div>
           <div><span class="label">LATÊNCIA</span><strong id="lobby-ping">— ms</strong></div>
+        </div>
+        <div class="lobby-loadout">
+          <span class="label">SEU KIT</span><strong id="lobby-loadout">GAVIÃO · VX-9 RANGER</strong>
+          <button class="link" type="button" data-action="lobby-operators">TROCAR OPERADOR</button>
+          <button class="link" type="button" data-action="lobby-arsenal">TROCAR ARMA</button>
         </div>
         <div class="teams">
           <div class="team alfa"><h3>ALFA</h3><ul id="lobby-team-1"></ul></div>
           <div class="team omega"><h3>ÔMEGA</h3><ul id="lobby-team-2"></ul></div>
         </div>
+        <div class="lobby-bots hidden" id="lobby-bots" aria-label="Bots da sala">
+          <span class="label">BOTS</span>
+          <button class="btn small" type="button" data-action="bots-add-1">+ ALFA</button>
+          <button class="btn small" type="button" data-action="bots-add-2">+ ÔMEGA</button>
+          <button class="btn small ghost" type="button" data-action="bots-remove">REMOVER</button>
+          <div class="seg" id="lobby-bot-diff" role="group" aria-label="Dificuldade dos bots">
+            <button type="button" data-diff="normal">NORMAL</button><button type="button" data-diff="hard">DIFÍCIL</button><button type="button" data-diff="elite">ELITE</button>
+          </div>
+        </div>
         <p class="panel-hint" id="lobby-status">Aguardando jogadores…</p>
         <div class="panel-actions row">
-          <button class="btn primary" data-action="net-start" id="lobby-start">INICIAR PARTIDA</button>
-          <button class="btn" data-action="net-ready" id="lobby-ready">PRONTO</button>
-          <button class="btn" data-action="net-switch-team">TROCAR EQUIPE</button>
-          <button class="btn ghost" data-action="net-leave">SAIR DA SALA</button>
+          <button class="btn primary" type="button" data-action="net-start" id="lobby-start">INICIAR PARTIDA</button>
+          <button class="btn" type="button" data-action="net-ready" id="lobby-ready">PRONTO</button>
+          <button class="btn" type="button" data-action="net-switch-team">TROCAR EQUIPE</button>
+          <button class="btn ghost" type="button" data-action="net-leave">SAIR DA SALA</button>
         </div>
       </div>
     </section>
 
-    <!-- multiplayer: resultado -->
+    <!-- =================================================== ONLINE: RESULTADO -->
     <section class="screen" data-screen="net-end">
       <div class="panel end net-end">
-        <span id="net-end-badge" class="end-badge win">VITÓRIA</span>
         <h2 class="panel-title" id="net-end-title">VITÓRIA DA EQUIPE ALFA</h2>
+        <span id="net-end-badge" class="end-badge win">VITÓRIA</span>
         <p class="panel-hint" id="net-end-subtitle"></p>
         <div class="net-end-score"><span class="alfa">ALFA <b id="net-end-1">0</b></span><span class="omega"><b id="net-end-2">0</b> ÔMEGA</span></div>
+        <div class="net-end-me" id="net-end-me">
+          <div><span class="label">SEU DESEMPENHO</span><strong id="net-end-kd">0 / 0</strong><small>ELIMINAÇÕES / MORTES</small></div>
+          <div><span class="label">OBJETIVOS</span><strong id="net-end-obj">—</strong><small>INSTALAÇÕES / DESARMES</small></div>
+          <div class="reward" id="net-end-reward"><span class="label">RECOMPENSA</span><strong id="net-end-total">…</strong><small id="net-end-balance">Calculando no servidor…</small><ul id="net-end-breakdown"></ul></div>
+        </div>
         <table class="net-end-table"><thead><tr><th>JOGADOR</th><th>EQUIPE</th><th>E</th><th>M</th><th>PTS</th></tr></thead><tbody id="net-end-rows"></tbody></table>
         <p class="panel-hint" id="net-end-return">Voltando ao lobby…</p>
-        <div class="panel-actions row"><button class="btn ghost" data-action="net-leave">SAIR DA SALA</button></div>
+        <div class="panel-actions row">
+          <button class="btn primary" type="button" data-action="net-play-again" id="net-again">JOGAR NOVAMENTE</button>
+          <button class="btn ghost" type="button" data-action="net-leave">MENU PRINCIPAL</button>
+        </div>
       </div>
     </section>
 
-    <!-- controles (telas estreitas) -->
+    <!-- ============================================================== CRÉDITOS -->
+    <section class="screen" data-screen="credits">
+      <div class="panel credits-panel">
+        <h2 class="panel-title">CRÉDITOS</h2>
+        <div class="credits-body">
+          <section><h3>OPERATION ZERO</h3><p>Design, código, mapas, armas, acabamentos, efeitos, interface, marca e áudio sintetizado criados para o projeto.</p></section>
+          <section><h3>PERSONAGENS E ANIMAÇÕES</h3><p>Microsoft Rocketbox Avatar Library — licença MIT, © 2020 Microsoft. Modelos convertidos, otimizados e recoloridos; insígnias reais removidas. Equipamento adicional dos operadores é procedural.</p></section>
+          <section><h3>BIBLIOTECAS</h3><p>three.js — MIT, © 2010-2023 three.js authors.<br />Colyseus (servidor e SDK) — MIT, © Endel Dreyer.<br />Express — MIT.</p></section>
+          <section><h3>DETALHES</h3><p>A lista completa de origens, licenças e alterações está no arquivo ASSET_CREDITS.md do projeto.</p></section>
+        </div>
+        <div class="panel-actions row"><button class="btn primary" type="button" data-action="credits-back">VOLTAR</button></div>
+      </div>
+    </section>
+
+    <!-- ===================================================== ABERTURA DE CAIXA -->
+    <div id="case-open" class="hidden" role="dialog" aria-modal="true" aria-labelledby="case-open-title">
+      <div class="case-open-panel">
+        <h2 class="panel-title" id="case-open-title">ABRINDO CAIXA</h2>
+        <div class="reel-window"><div class="reel" id="case-reel"></div><i class="reel-marker" aria-hidden="true"></i></div>
+        <div class="case-result hidden" id="case-result">
+          <span class="rarity-tag" id="case-rarity">RARO</span>
+          <h3 id="case-item">—</h3>
+          <p class="muted" id="case-note"></p>
+          <div class="panel-actions row">
+            <button class="btn primary" type="button" data-action="case-equip" id="case-equip">EQUIPAR</button>
+            <button class="btn" type="button" data-action="case-close">FECHAR</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================= CONTROLES -->
     <section class="screen" data-screen="controls">
       <div class="panel">
-        <p class="eyebrow">REFERÊNCIA</p>
         <h2 class="panel-title">CONTROLES</h2>
-        <div id="controls-copy"></div>
-        <div class="panel-actions row"><button class="btn primary" data-action="controls-back">VOLTAR</button></div>
+        <dl class="controls-list" id="controls-copy"></dl>
+        <p class="panel-hint">As teclas podem ser alteradas em CONFIGURAÇÕES → CONTROLES.</p>
+        <div class="panel-actions row"><button class="btn primary" type="button" data-action="controls-back">VOLTAR</button></div>
       </div>
     </section>
 
@@ -324,10 +561,11 @@
         <div class="spinner" aria-hidden="true"></div>
         <h2 class="panel-title" id="net-overlay-title">RECONECTANDO</h2>
         <p class="panel-hint" id="net-overlay-text"></p>
-        <div class="panel-actions row"><button class="btn ghost" data-action="net-abandon">VOLTAR AO MENU</button></div>
+        <div class="panel-actions row"><button class="btn ghost" type="button" data-action="net-abandon">VOLTAR AO MENU</button></div>
       </div>
     </div>
 
+    <div id="toast" role="status" aria-live="polite"></div>
     <div id="lock-prompt"><span id="lock-text">CLIQUE PARA RETOMAR</span></div>
   </div>
 
@@ -349,10 +587,10 @@
         if (!window.__OZ_BOOTED && e && e.message) fail('Erro ao carregar: ' + e.message);
       });
       setTimeout(function () {
-        if (!window.__OZ_BOOTED) fail('Os módulos do jogo não terminaram de carregar em 15 segundos. Verifique a conexão com o CDN do Three.js.');
-      }, 15000);
+        if (!window.__OZ_BOOTED) fail('Os módulos do jogo não terminaram de carregar em 30 segundos.');
+      }, 30000);
     })();
   </script>
-  <script type="module" src="game.js" onerror="window.__OZ_FAIL && window.__OZ_FAIL('Falha ao baixar os módulos do jogo (game.js ou Three.js).')"></script>
+  <script type="module" src="game.js" onerror="window.__OZ_FAIL && window.__OZ_FAIL('Falha ao baixar os módulos do jogo.')"></script>
 </body>
 </html>

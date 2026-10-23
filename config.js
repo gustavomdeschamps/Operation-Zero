@@ -7,7 +7,7 @@ import { GAME, DEG2RAD } from './shared/game-config.js';
 const DEG = DEG2RAD;
 
 export const CONFIG = {
-  version: '2.0.0',
+  version: '3.0.0',
   arenaName: 'FOUNDRY-7',
   arenaSubtitle: 'Instalação de Treinamento Tático',
 
@@ -96,17 +96,7 @@ export const CONFIG = {
     masterVolume: 0.7,
   },
 
-  defaultSettings: {
-    sensitivity: 1.0,
-    fov: 78,
-    volume: 0.7,
-    quality: 'medium',
-    botsFireBack: true,
-    showFps: false,
-    crosshairColor: '#3ef0ff',
-  },
-
-  storageKey: 'operation-zero-settings-v1',
+  // preferências do jogador (padrões, validação e persistência): ver settings.js
 };
 
 export { DEG2RAD, GAME };

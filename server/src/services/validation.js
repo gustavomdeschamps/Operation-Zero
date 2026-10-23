@@ -2,6 +2,8 @@
 import { GAME } from '../../../shared/game-config.js';
 import { BTN, sanitizeName, isValidMode, normalizeRoomCode, isValidRoomCode, PROTOCOL_VERSION } from '../../../shared/protocol.js';
 import { wrapAngle, clamp } from '../../../shared/math.js';
+import { isValidOperator, isValidPrimary, isValidMap, mapSupportsMode, DEFAULT_OPERATOR, DEFAULT_PRIMARY, DEFAULT_MAP } from '../../../shared/catalog.js';
+import { isValidDifficulty } from '../ai/bot-config.js';
 
 const BTN_MASK = Object.values(BTN).reduce((a, b) => a | b, 0);
 const finiteOr = (v, d) => (Number.isFinite(v) ? v : d);
@@ -31,8 +33,19 @@ export function validateJoinOptions(options = {}) {
   if (!name) errors.push('Nome inválido: use de 2 a 16 letras, números, espaço, ponto, hífen ou sublinhado.');
   const clientKey = typeof options.clientKey === 'string' && /^[a-zA-Z0-9-]{8,64}$/.test(options.clientKey) ? options.clientKey : null;
   if (!clientKey) errors.push('Identificador de sessão do navegador ausente.');
+  const loadout = validateLoadout(options);
+  if (loadout.error) errors.push(loadout.error);
   if (errors.length) throw new Error(errors[0]);
-  return { name, clientKey };
+  return { name, clientKey, operator: loadout.operator, primary: loadout.primary };
+}
+
+/** Operador e arma primária: ausentes → padrão; presentes e desconhecidos → recusados. */
+export function validateLoadout(options = {}) {
+  const operator = options.operator === undefined ? DEFAULT_OPERATOR : options.operator;
+  const primary = options.primary === undefined ? DEFAULT_PRIMARY : options.primary;
+  if (!isValidOperator(operator)) return { error: 'Operador desconhecido.' };
+  if (!isValidPrimary(primary)) return { error: 'Arma primária indisponível.' };
+  return { operator, primary };
 }
 
 export function validateCreateOptions(options = {}, maxPlayersLimit) {
@@ -41,7 +54,12 @@ export function validateCreateOptions(options = {}, maxPlayersLimit) {
   const requested = Number.isInteger(options.maxPlayers) ? options.maxPlayers : maxPlayersLimit;
   const maxPlayers = clamp(requested, 2, maxPlayersLimit);
   const roomName = sanitizeName(typeof options.roomName === 'string' ? options.roomName.slice(0, 16) : '') || null;
-  return { mode, isPrivate, maxPlayers, roomName };
+  const map = options.map === undefined ? DEFAULT_MAP : options.map;
+  if (!isValidMap(map)) throw new Error('Mapa desconhecido.');
+  if (!mapSupportsMode(map, mode)) throw new Error('Este mapa não suporta o modo escolhido.');
+  const botDifficulty = options.botDifficulty === undefined ? 'normal' : options.botDifficulty;
+  if (!isValidDifficulty(botDifficulty)) throw new Error('Dificuldade de bots desconhecida.');
+  return { mode, isPrivate, maxPlayers, roomName, map, botDifficulty };
 }
 
 export { normalizeRoomCode, isValidRoomCode };

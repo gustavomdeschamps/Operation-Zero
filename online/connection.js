@@ -46,6 +46,7 @@ export class OnlineConnection {
     this.client = null;
     this.room = null;
     this.sdk = null;
+    this.loadout = {};      // { operator, primary } enviados na entrada (validados pelo servidor)
   }
 
   /** Descobre o servidor: ?server=, client-config.js, mesma origem ou porta padrão local. */
@@ -99,7 +100,8 @@ export class OnlineConnection {
   }
 
   joinOptions(name, extra = {}) {
-    return { name, clientKey: getClientKey(), protocol: PROTOCOL_VERSION, ...extra };
+    const token = this.accountToken ? this.accountToken() : '';
+    return { name, clientKey: getClientKey(), protocol: PROTOCOL_VERSION, ...this.loadout, ...(token ? { accountToken: token } : {}), ...extra };
   }
 
   withTimeout(promise, label) {
@@ -117,9 +119,9 @@ export class OnlineConnection {
     return fetchJson(`${this.httpUrl}/api/rooms/${encodeURIComponent(code)}`, 4000);
   }
 
-  async createRoom(name, { mode, maxPlayers }) {
+  async createRoom(name, { mode, maxPlayers, map }) {
     await this.connect();
-    const room = await this.withTimeout(this.client.create(ROOM_NAME, this.joinOptions(name, { mode, maxPlayers, private: true })), 'Criar sala');
+    const room = await this.withTimeout(this.client.create(ROOM_NAME, this.joinOptions(name, { mode, maxPlayers, map, private: true })), 'Criar sala');
     return this.adopt(room);
   }
 
@@ -135,10 +137,13 @@ export class OnlineConnection {
     return this.adopt(room);
   }
 
-  /** Busca pública: entra numa sala compatível ou cria outra. `isCancelled` permite desistir. */
-  async quickMatch(name, mode, isCancelled = () => false) {
+  /**
+   * Busca pública: entra numa sala do modo ou cria outra (com o mapa preferido — salas existentes
+   * mantêm o mapa delas, que vem no estado da sala). `isCancelled` permite desistir.
+   */
+  async quickMatch(name, mode, isCancelled = () => false, map = undefined) {
     await this.connect();
-    const room = await this.withTimeout(this.client.joinOrCreate(ROOM_NAME, this.joinOptions(name, { mode })), 'Buscar partida');
+    const room = await this.withTimeout(this.client.joinOrCreate(ROOM_NAME, this.joinOptions(name, { mode, map })), 'Buscar partida');
     if (isCancelled()) { room.leave(true).catch(() => {}); return null; }
     return this.adopt(room);
   }

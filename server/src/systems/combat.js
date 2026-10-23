@@ -1,7 +1,7 @@
 // Combate autoritativo: armas (munição, recarga, troca, cadência), validação de disparos,
 // resolução com compensação de latência, dano, eliminação e placar.
 import { GAME } from '../../../shared/game-config.js';
-import { WEAPONS, weaponBySlot, maxSpreadFor, damageFor } from '../../../shared/weapon-rules.js';
+import { loadoutFor, maxSpreadFor, damageFor } from '../../../shared/weapon-rules.js';
 import { rayVsPlayer } from '../../../shared/hitboxes.js';
 import { movementState, eyeHeight } from '../../../shared/movement.js';
 import { BTN, MSG } from '../../../shared/protocol.js';
@@ -10,9 +10,14 @@ const SWITCH_TIME = 0.36;          // igual à animação de troca do cliente
 const SWITCH_SWAP = 0.5;           // a arma troca na metade da animação
 const EPS = 1e-6;
 
-/** Munição e estado de arma iniciais (respawn / nova rodada). */
+/** Arma atualmente empunhada (do kit do jogador). */
+export const currentWeapon = (rec) => rec.loadout[rec.slot];
+
+/** Munição e estado de arma iniciais (respawn / nova rodada). Aplica o kit escolhido (rec.primary). */
 export function resetLoadout(rec) {
-  rec.ammo = new Map(WEAPONS.map((w) => [w.slot, { mag: w.magSize, reserve: w.reserve }]));
+  rec.loadout = loadoutFor(rec.primary);
+  if (rec.state) rec.state.primary = rec.loadout[1].id;
+  rec.ammo = new Map([1, 2].map((slot) => [slot, { mag: rec.loadout[slot].magSize, reserve: rec.loadout[slot].reserve }]));
   rec.slot = 1;
   rec.reloadEnd = -1;
   rec.switchStart = -1;
@@ -62,7 +67,7 @@ export function handleWeaponInput(room, rec, inp, dt) {
 
   // recarga (não duplica; conclui pelo relógio de simulação do jogador)
   const ammo = rec.ammo.get(rec.slot);
-  const cur = weaponBySlot(rec.slot);
+  const cur = currentWeapon(rec);
   if (rec.autoReloadAt >= 0 && t + EPS >= rec.autoReloadAt) { rec.autoReloadAt = -1; if (rec.switchStart < 0) startReload(rec, cur); }
   if ((inp.btn & BTN.RELOAD) && rec.reloadEnd < 0 && rec.switchStart < 0) startReload(rec, cur);
   if (rec.reloadEnd >= 0 && t + EPS >= rec.reloadEnd) {
@@ -81,7 +86,7 @@ export function handleWeaponInput(room, rec, inp, dt) {
   syncWeaponState(rec);
 }
 
-export function startReload(rec, def = weaponBySlot(rec.slot)) {
+export function startReload(rec, def = currentWeapon(rec)) {
   const ammo = rec.ammo.get(rec.slot);
   rec.autoReloadAt = -1;
   if (rec.reloadEnd >= 0 || ammo.mag >= def.magSize || ammo.reserve <= 0) return false;
@@ -96,7 +101,7 @@ const _fwd = { x: 0, y: 0, z: 0 };
 /** Valida e resolve um disparo. Retorna { ok, reason?, hit? } (útil para testes). */
 export function tryFire(room, rec, inp, dt) {
   const s = rec.state;
-  const def = weaponBySlot(rec.slot);
+  const def = currentWeapon(rec);
   const ammo = rec.ammo.get(rec.slot);
   const t = rec.simTime;
   const reject = (reason) => { room.rejectAction(rec, 'fire', reason); return { ok: false, reason }; };
@@ -150,7 +155,7 @@ export function resolveShot(room, shooter, origin, dir, def) {
     if (rec === shooter || !rec.state.alive || !rec.state.connected) continue;
     if (!room.canDamage(shooter, rec)) continue;
     const seen = room.seenPosition(shooter, rec);
-    const h = rayVsPlayer(origin, dir, best, seen.x, seen.y, seen.z, seen.h);
+    const h = rayVsPlayer(origin, dir, best, seen.x, seen.y, seen.z, seen.h, seen.pose);
     if (h && h.t < best) { best = h.t; target = rec; zone = h.zone; }
   }
   const end = { x: origin.x + dir.x * best, y: origin.y + dir.y * best, z: origin.z + dir.z * best };
@@ -169,6 +174,7 @@ export function applyDamage(room, attacker, target, amount, zone, weaponId) {
   const applied = Math.min(s.hp, Math.max(0, Math.round(amount)));
   s.hp -= applied;
   target.lastDamageTime = target.simTime;
+  if (room.bots) room.bots.damaged(target, attacker);
   room.sendTo(attacker, MSG.HIT, { t: target.sid, z: zone, d: applied, k: s.hp <= 0 });
   room.sendTo(target, MSG.DAMAGED, { a: attacker.sid, d: applied, x: round2(attacker.move.pos.x), y: round2(attacker.move.pos.y + 1.4), z: round2(attacker.move.pos.z) });
   if (s.hp <= 0) {
@@ -187,6 +193,10 @@ export function killPlayer(room, victim, killer, headshot, weaponId) {
   v.action = 0;
   victim.reloadEnd = -1;
   if (killer && killer !== victim) {
+    if (killer.matchStats) {
+      if (victim.bot) killer.matchStats.botKills += 1;
+      if (headshot) killer.matchStats.headshots += 1;
+    }
     killer.state.kills += 1;
     killer.state.score += headshot ? 150 : 100;
   }

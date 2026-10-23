@@ -5,7 +5,19 @@ import { lerp, invLerp } from './math.js';
 
 export const WEAPONS = GAME.weapons;
 
-export const weaponBySlot = (slot) => WEAPONS.find((w) => w.slot === slot) || null;
+export const weaponById = (id) => WEAPONS.find((w) => w.id === id) || null;
+
+/**
+ * Kit do jogador: slot 1 = arma primária escolhida (fuzil ou submetralhadora), slot 2 = pistola.
+ * Retorna { 1: def, 2: def }. Identificadores inválidos caem no padrão (o servidor já valida antes).
+ */
+export function loadoutFor(primary = 'rifle') {
+  const p = weaponById(primary);
+  return { 1: p && p.slot === 1 ? p : weaponById('rifle'), 2: weaponById('pistol') };
+}
+
+/** Arma do slot para um kit (padrão: fuzil + pistola). */
+export const weaponBySlot = (slot, primary = 'rifle') => loadoutFor(primary)[slot] || null;
 
 /**
  * Dispersão (raio angular, rad) para um estado de movimento.

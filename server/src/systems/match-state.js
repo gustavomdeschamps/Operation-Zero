@@ -2,6 +2,7 @@
 import { GAME } from '../../../shared/game-config.js';
 import { PHASE, TEAM, MSG, NOTICE_TYPES } from '../../../shared/protocol.js';
 import { clearSmokes } from './abilities.js';
+import { payMatchRewards, newMatchStats } from '../economy/match-rewards.js';
 
 const PUBLIC_AUTO_START = 20; // s após atingir o mínimo de jogadores (salas públicas)
 
@@ -9,6 +10,8 @@ export class MatchFlow {
   constructor(room) {
     this.room = room;
     this.lobbyWait = 0;
+    this.matchSeq = 0;      // partidas jogadas nesta sala (parte do identificador de conclusão)
+    this.matchTime = 0;     // s de partida em andamento
   }
 
   get phase() { return this.room.state.phase; }
@@ -40,6 +43,7 @@ export class MatchFlow {
         if (st.timeLeft <= 0) this.backToLobby();
         break;
       default:
+        this.matchTime += dt;
         room.mode.tick(room, dt);
     }
   }
@@ -49,6 +53,8 @@ export class MatchFlow {
     const room = this.room;
     const counts = room.teamCounts();
     const total = counts[TEAM.ALFA] + counts[TEAM.OMEGA];
+    // bots completam a contagem, mas nunca há partida sem ao menos uma pessoa conectada
+    if (![...room.records.values()].some((r) => !r.bot && r.state.connected)) return { ok: false, reason: 'Aguardando jogadores' };
     if (total < room.state.minPlayers) return { ok: false, reason: `São necessários ${room.state.minPlayers} jogadores` };
     if (room.state.mode === 'tactical' && room.state.minPlayers > 1 && (counts[TEAM.ALFA] === 0 || counts[TEAM.OMEGA] === 0)) {
       return { ok: false, reason: 'As duas equipes precisam de jogadores' };
@@ -79,7 +85,10 @@ export class MatchFlow {
     for (const rec of room.records.values()) {
       const s = rec.state;
       s.kills = 0; s.deaths = 0; s.score = 0;
+      rec.matchStats = newMatchStats();
     }
+    this.matchSeq += 1;
+    this.matchTime = 0;
     room.state.winner = 0;
     room.state.endReason = '';
     room.mode.start(room);
@@ -95,6 +104,7 @@ export class MatchFlow {
     st.endReason = reason;
     st.timeLeft = GAME.match.resultsTime;
     for (const rec of room.records.values()) { rec.state.action = 0; rec.interacting = false; }
+    try { payMatchRewards(room, winner); } catch (err) { console.error('[rewards]', err); }
     room.updateListing();
   }
 

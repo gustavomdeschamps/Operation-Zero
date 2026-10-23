@@ -1,4 +1,4 @@
-// OPERATION ZERO 2.0 — servidor multiplayer (Node.js + Colyseus).
+// OPERATION ZERO 3.0 — servidor multiplayer (Node.js + Colyseus).
 // Um único processo atende: WebSocket das partidas, matchmaking HTTP, API auxiliar,
 // verificação de saúde e (opcionalmente) os arquivos estáticos do cliente.
 import path from 'node:path';
@@ -13,6 +13,8 @@ import { normalizeRoomCode } from './services/validation.js';
 import { ROOM_NAME, PROTOCOL_VERSION } from '../../shared/protocol.js';
 import { GAME } from '../../shared/game-config.js';
 import { log } from './services/logger.js';
+import { economyRoutes } from './economy/routes.js';
+import { flushEconomy } from './economy/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -41,8 +43,12 @@ matchMaker.controller.getCorsHeaders = function corsHeaders(headers) {
 // ---------------------------------------------------------------------------
 // Rotas HTTP
 // ---------------------------------------------------------------------------
-const ROOT_FILE = /^\/[a-z0-9][a-z0-9-]*\.(js|css|html)$/i;
-const CLIENT_DIR_FILE = /^\/(shared|online)\/[a-z0-9][a-z0-9-]*\.js$/i;
+const ROOT_FILE = /^\/[a-z0-9][a-z0-9-]*\.(js|css|html|svg)$/i;
+const CLIENT_DIR_FILE = /^\/(shared|shared\/maps|online|characters|ui)\/[a-z0-9][a-z0-9-]*\.js$/i;
+// recursos versionados no repositório: modelos/animações (GLB), marca (SVG) e three.js local
+const ASSET_FILE = /^\/assets\/(characters|animations)\/[a-z0-9][a-z0-9_-]*\.glb$|^\/assets\/branding\/[a-z0-9][a-z0-9-]*\.svg$/i;
+const VENDOR_FILE = /^\/vendor\/three\/(three\.module\.min\.js|addons\/(loaders|utils)\/[A-Za-z]+\.js)$/;
+const TYPES = { '.glb': 'model/gltf-binary', '.svg': 'image/svg+xml' };
 
 function configureHttp(app) {
   if (SERVER_CONFIG.trustProxy) app.set('trust proxy', true);
@@ -55,6 +61,12 @@ function configureHttp(app) {
       const origin = req.headers.origin;
       if (!originAllowed(origin, req.headers.host)) return res.status(403).json({ error: 'origem não permitida' });
       if (origin) { res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin'); }
+      if (req.method === 'OPTIONS') {
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
+        res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+        res.setHeader('Access-Control-Max-Age', '600');
+        return res.status(204).end();
+      }
     }
     return next();
   });
@@ -76,6 +88,8 @@ function configureHttp(app) {
       res.status(500).json({ error: 'falha ao consultar sala' });
     }
   });
+
+  economyRoutes(app);
 
   app.get('/api/config', (req, res) => {
     res.json({ protocol: PROTOCOL_VERSION, tickRate: GAME.net.tickRate, maxPlayers: SERVER_CONFIG.maxPlayersPerRoom, minPlayers: SERVER_CONFIG.minPlayersToStart });
@@ -99,8 +113,12 @@ function configureHttp(app) {
   // cliente estático: somente arquivos do jogo (nunca server/, node_modules nem arquivos ocultos)
   app.get('*', (req, res, next) => {
     const p = req.path === '/' ? '/index.html' : req.path;
-    if (!ROOT_FILE.test(p) && !CLIENT_DIR_FILE.test(p)) return next();
-    res.setHeader('Cache-Control', 'no-cache');
+    const asset = ASSET_FILE.test(p) || VENDOR_FILE.test(p);
+    if (!asset && !ROOT_FILE.test(p) && !CLIENT_DIR_FILE.test(p)) return next();
+    // código: sempre revalidado (atualizações chegam na hora); modelos e bibliotecas: 1 h de cache
+    res.setHeader('Cache-Control', asset ? 'public, max-age=3600' : 'no-cache');
+    const type = TYPES[path.extname(p).toLowerCase()];
+    if (type) res.type(type);
     return res.sendFile(path.join(PROJECT_ROOT, p), { dotfiles: 'deny' }, (err) => { if (err) next(); });
   });
 }
@@ -122,7 +140,7 @@ export async function startServer({ port = SERVER_CONFIG.port, host = SERVER_CON
   });
   const gameServer = new Server({ transport, greet: false, express: configureHttp });
   gameServer.define(ROOM_NAME, MatchRoom).filterBy(['mode']);
-  gameServer.onShutdown(() => log.info('server.shutdown', {}));
+  gameServer.onShutdown(() => { flushEconomy(); log.info('server.shutdown', {}); });
   await gameServer.listen(port, host);
   log.info('server.listening', {
     port, host, env: SERVER_CONFIG.nodeEnv, serveClient: SERVER_CONFIG.serveClient,
